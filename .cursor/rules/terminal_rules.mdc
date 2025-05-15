@@ -1,0 +1,17 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Terminal Command Rules
+
+When a task requires running a command in the terminal:
+
+1.  **NEVER execute the command directly** using any available tools.
+2.  Instead, **display the exact command** that needs to be run.
+3.  Clearly state that the **USER should run this command manually** in their terminal.
+4.  After displaying the command, **ASK the user to confirm** if they have run the command manually (e.g., "Please run the above command in your terminal and let me know once you have done so by replying with 'yes' or 'done'.").
+5.  **If the user confirms** (e.g., replies with "yes", "done", "ok", "agree"), then proceed with the next steps of the task that depend on the command's execution.
+6.  **If the user does not confirm or indicates they have not run it** (e.g., replies with "no", "not yet", "disagree"), explain clearly what the consequences are if the command is not run (e.g., "If this command is not run, I will not be able to [explain what is blocked or what will fail] which is necessary to [explain the overall goal affected]. Please let me know if you wish to proceed without running it, or if you have now run it."). Do not proceed with dependent steps until confirmation or explicit instruction to proceed without.
+
+
