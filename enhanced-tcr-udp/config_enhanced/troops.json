@@ -1,0 +1,70 @@
+{
+  "troops": {
+    "pawn": {
+      "id": "pawn",
+      "name": "Pawn",
+      "baseHP": 50,
+      "baseATK": 150,
+      "baseDEF": 100,
+      "manaCost": 3,
+      "expYield": 5,
+      "special": "",
+      "hasSpecial": false
+    },
+    "bishop": {
+      "id": "bishop",
+      "name": "Bishop",
+      "baseHP": 100,
+      "baseATK": 200,
+      "baseDEF": 150,
+      "manaCost": 4,
+      "expYield": 10,
+      "special": "",
+      "hasSpecial": false
+    },
+    "rook": {
+      "id": "rook",
+      "name": "Rook",
+      "baseHP": 250,
+      "baseATK": 200,
+      "baseDEF": 200,
+      "manaCost": 5,
+      "expYield": 25,
+      "special": "",
+      "hasSpecial": false
+    },
+    "knight": {
+      "id": "knight",
+      "name": "Knight",
+      "baseHP": 200,
+      "baseATK": 300,
+      "baseDEF": 150,
+      "manaCost": 5,
+      "expYield": 25,
+      "special": "",
+      "hasSpecial": false
+    },
+    "prince": {
+      "id": "prince",
+      "name": "Prince",
+      "baseHP": 500,
+      "baseATK": 400,
+      "baseDEF": 300,
+      "manaCost": 6,
+      "expYield": 50,
+      "special": "",
+      "hasSpecial": false
+    },
+    "queen": {
+      "id": "queen",
+      "name": "Queen",
+      "baseHP": 0,
+      "baseATK": 0,
+      "baseDEF": 0,
+      "manaCost": 5,
+      "expYield": 30,
+      "special": "Heals the friendly tower with lowest HP by 300",
+      "hasSpecial": true
+    }
+  }
+}

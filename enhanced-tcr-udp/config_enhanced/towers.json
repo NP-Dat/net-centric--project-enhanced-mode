@@ -1,0 +1,22 @@
+{
+  "towers": {
+    "king_tower": {
+      "id": "king_tower",
+      "name": "King Tower",
+      "baseHP": 2000,
+      "baseATK": 500,
+      "baseDEF": 300,
+      "critChance": 10.0,
+      "expYield": 200
+    },
+    "guard_tower": {
+      "id": "guard_tower",
+      "name": "Guard Tower",
+      "baseHP": 1000,
+      "baseATK": 300,
+      "baseDEF": 100,
+      "critChance": 5.0,
+      "expYield": 100
+    }
+  }
+}

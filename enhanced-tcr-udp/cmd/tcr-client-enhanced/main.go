@@ -4,48 +4,88 @@ import (
 	"fmt"
 	"log"
 
+	// "os"
+
 	"enhanced-tcr-udp/internal/client"
-	// "github.com/nsf/termbox-go" // Keep for later UI integration
+	"enhanced-tcr-udp/internal/models"  // For PlayerAccount type hint
+	"enhanced-tcr-udp/internal/network" // For MatchFoundResponse type hint
+
+	"github.com/nsf/termbox-go"
 )
 
 func main() {
-	// Termbox initialization will be done later when UI is more developed.
-	/*
-		err := termbox.Init()
-		if err != nil {
-			panic(err)
-		}
-		defer termbox.Close()
-	*/
+	log.Println("Starting Enhanced TCR Client with Termbox UI...")
 
-	log.Println("Starting Enhanced TCR Client...")
+	ui := client.NewTermboxUI()
+	err := ui.Init()
+	if err != nil {
+		log.Fatalf("Failed to initialize termbox: %v", err)
+		// Fallback to console if termbox fails? For now, just exit.
+		return
+	}
+	defer ui.Close()
 
-	gameClient := client.NewClient()
+	ui.ClearScreen()
+	ui.DisplayStaticText(1, 1, "Welcome to Enhanced TCR Client!", termbox.ColorCyan, termbox.ColorBlack)
+
+	gameClient := client.NewClient(ui)  // Pass UI to client
 	defer gameClient.CloseConnections() // Ensure connections are closed on exit
 
-	player, err := gameClient.Authenticate()
+	var player *models.PlayerAccount
+	player, err = gameClient.AuthenticateWithUI() // Modified to use UI
 	if err != nil {
-		log.Fatalf("Authentication failed: %v", err)
+		ui.DisplayStaticText(1, 7, fmt.Sprintf("Authentication failed: %v", err), termbox.ColorRed, termbox.ColorBlack)
+		ui.DisplayStaticText(1, 9, "Press ESC to exit.", termbox.ColorWhite, termbox.ColorBlack)
+		ui.RunSimpleEvacuateLoop() // Wait for user to exit
 		return
 	}
 
-	fmt.Printf("Welcome, %s (Level %d, EXP %d)!\n", player.Username, player.Level, player.EXP)
-	fmt.Println("Login successful. Requesting matchmaking...")
+	ui.ClearScreen()
+	ui.DisplayStaticText(1, 1, fmt.Sprintf("Welcome, %s (Level %d, EXP %d)!", player.Username, player.Level, player.EXP), termbox.ColorGreen, termbox.ColorBlack)
+	ui.DisplayStaticText(1, 3, "Login successful. Requesting matchmaking...", termbox.ColorWhite, termbox.ColorBlack)
 
-	matchInfo, err := gameClient.RequestMatchmaking()
+	var matchInfo *network.MatchFoundResponse              // Use the type from network package
+	matchInfo, err = gameClient.RequestMatchmakingWithUI() // Modified to use UI for status updates
 	if err != nil {
-		log.Fatalf("Matchmaking failed: %v", err)
+		ui.DisplayStaticText(1, 5, fmt.Sprintf("Matchmaking failed: %v", err), termbox.ColorRed, termbox.ColorBlack)
+		ui.DisplayStaticText(1, 7, "Press ESC to exit.", termbox.ColorWhite, termbox.ColorBlack)
+		ui.RunSimpleEvacuateLoop()
 		return
 	}
 
-	fmt.Printf("Match found! Game ID: %s, Opponent: %s, UDP Port: %d\n",
-		matchInfo.GameID, matchInfo.Opponent.Username, matchInfo.UDPPort)
-	fmt.Println("Client is ready for UDP gameplay (not implemented in Sprint 1).")
+	ui.ClearScreen()
+	ui.DisplayStaticText(1, 1, "Match Found!", termbox.ColorGreen, termbox.ColorBlack)
+	ui.DisplayStaticText(1, 3, fmt.Sprintf("Game ID: %s", matchInfo.GameID), termbox.ColorWhite, termbox.ColorBlack)
+	ui.DisplayStaticText(1, 4, fmt.Sprintf("Opponent: %s (Level %d)", matchInfo.Opponent.Username, matchInfo.Opponent.Level), termbox.ColorWhite, termbox.ColorBlack)
+	ui.DisplayStaticText(1, 5, fmt.Sprintf("UDP Port for Game: %d", matchInfo.UDPPort), termbox.ColorWhite, termbox.ColorBlack)
+	ui.DisplayStaticText(1, 6, fmt.Sprintf("You are PlayerOne: %t", matchInfo.IsPlayerOne), termbox.ColorWhite, termbox.ColorBlack)
 
-	// Placeholder for further client logic (matchmaking, game loop, termbox UI)
-	// For now, we can just wait for a key press to exit to keep it simple.
-	fmt.Println("Press Enter to exit.")
-	fmt.Scanln()
+	ui.DisplayStaticText(1, 8, "Attempting to send a UDP ping to global echo server (localhost:8081)...", termbox.ColorYellow, termbox.ColorBlack)
+	termbox.Flush() // Ensure message is displayed before potential blocking call
+
+	// Use a placeholder gameID and token for this global ping, or use actual if available
+	// For global echo, gameID/token might not be strictly checked by the echo server.
+	pingGameID := "global_ping_test"
+	if matchInfo != nil && matchInfo.GameID != "" {
+		pingGameID = matchInfo.GameID // Use actual game ID if we have one
+	}
+	pingPlayerToken := "test_client"
+	if player != nil {
+		pingPlayerToken = player.Username
+	}
+
+	udpResponse, udpErr := gameClient.SendBasicUDPMessage(pingGameID, pingPlayerToken, 8081, "Hello UDP Echo Server!")
+	if udpErr != nil {
+		ui.DisplayStaticText(1, 9, fmt.Sprintf("UDP Ping failed: %v", udpErr), termbox.ColorRed, termbox.ColorBlack)
+	} else {
+		ui.DisplayStaticText(1, 9, fmt.Sprintf("UDP Ping successful! Response: %s", udpResponse), termbox.ColorGreen, termbox.ColorBlack)
+	}
+
+	ui.DisplayStaticText(1, 11, "Client is ready for game-specific UDP gameplay. Press ESC to exit this screen.", termbox.ColorYellow, termbox.ColorBlack)
+	ui.RunSimpleEvacuateLoop() // For now, just wait here
+
+	// TODO: Next step would be to initiate UDP communication with the server game session
+	log.Println("Exiting client application.")
 }
 
 /*

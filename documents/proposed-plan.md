@@ -90,13 +90,18 @@ This document outlines the plan to build the "Enhanced TCR" game as a separate p
     *   **Serialization:** JSON for both TCP and UDP message payloads.
 
 4.  **Data Structures (Core Models):**
-    *   Similar to the original plan (`PlayerAccount`, `GameConfig`, `TowerSpec`, `TroopSpec`, `GameSession`, `PlayerInGame`, `TowerInstance`, `ActiveTroop`).
-    *   Network messages will need fields for sequence numbers, session IDs for UDP.
+    *   `Player`: `ID`, `Username`, `HashedPassword`, `EXP`, `Level`, `Connection` (transient `net.Conn`), `GameID` (transient), `CurrentMana` (Enhanced), `Towers` (map/slice), `AvailableTroops` (map/slice based on clarification), `ActiveTroops` (map/slice).
+    *   `Tower`: `ID`, `Name`, `BaseHP`, `BaseATK`, `BaseDEF`, `CurrentHP`, `OwnerPlayerID`.
+    *   `TroopSpec`: `ID`, `Name`, `BaseHP`, `BaseATK`, `BaseDEF`, `ManaCost` (Enhanced), `BaseCritChance` (Enhanced). (Loaded from JSON).
+    *   `ActiveTroop`: `InstanceID`, `SpecID`, `CurrentHP`, `OwnerPlayerID`, `TargetID` (transient).
+    *   `Game`: `ID`, `Players` [2]*Player, `GameState` (e.g., `Waiting`, `RunningSimple`, `RunningEnhanced`, `Finished`), `CurrentTurnPlayerID` (Simple), `StartTime` (Enhanced), `EndTime` (Enhanced), `BoardState` (containing all active troops and tower statuses).
+    *   `PlayerData`: `Username`, `HashedPassword`, `EXP`, `Level`. (For JSON persistence).
+    *   `GameConfig`: Contains maps/slices of `TowerSpec` and `TroopSpec`. (Loaded from JSON).
 
 5.  **Persistence:**
-    *   Go's `encoding/json`.
-    *   Player data: `data/players_enhanced/username.json`.
-    *   Game config: `config_enhanced/troops.json`, `config_enhanced/towers.json`.
+    *   Use Go's `encoding/json` package.
+    *   Player data: Store one JSON file per player (e.g., `data/players/username.json`) or a single JSON file containing a map of all players. A single file is simpler initially, but separate files scale better if many players were expected (though not likely critical here).
+    *   Game config: Store troop and tower base stats in separate JSON files (e.g., `config/troops.json`, `config/towers.json`).
 
 **Phase 3: Project Structure (Enhanced TCR - UDP & Termbox)**
 
@@ -104,40 +109,40 @@ This document outlines the plan to build the "Enhanced TCR" game as a separate p
 enhanced-tcr-udp/
 ├── cmd/
 │   ├── tcr-server-enhanced/
-│   │   └── main.go
+│   │   └── main.go                 # Server executable entry point
 │   └── tcr-client-enhanced/
-│       └── main.go
+│       └── main.go                 # Client executable entry point
 ├── internal/
 │   ├── server/
-│   │   ├── server.go         # Main server logic (TCP listener, UDP listener)
-│   │   ├── auth_tcp.go       # Authentication (TCP)
-│   │   ├── matchmaking_tcp.go # Matchmaking (TCP)
-│   │   ├── session_manager.go # Manages game sessions
-│   │   └── game_session.go   # Logic for a single game session (real-time loop, UDP handling)
+│   │   ├── server.go               # Main server logic (TCP listener, UDP listener)
+│   │   ├── auth_tcp.go             # Authentication (TCP)
+│   │   ├── matchmaking_tcp.go      # Matchmaking, Pairing players (TCP)
+│   │   ├── session_manager.go      # Manages game sessions
+│   │   └── game_session.go         # Logic for a single game session (real-time loop, UDP handling)
 │   ├── client/
-│   │   ├── client.go         # Main client logic (TCP/UDP connection, termbox setup)
-│   │   ├── network_handler.go # Handles incoming TCP/UDP messages
-│   │   └── ui_termbox.go     # Termbox rendering and input handling
+│   │   ├── client.go               # Main client logic (TCP/UDP connection, termbox setup)
+│   │   ├── network_handler.go      # Handles incoming TCP/UDP messages
+│   │   └── ui_termbox.go           # Termbox rendering and input handling
 │   ├── game/
-│   │   ├── logic_enhanced.go # Core Enhanced TCR game rules, state
-│   │   ├── combat.go         # Damage, CRIT calculation
-│   │   └── progression.go    # EXP, Leveling
-│   ├── models/               # Shared data structures (player, config, game entities)
-│   │   ├── player.go
-│   │   ├── config.go
+│   │   ├── logic_enhanced.go       # Core Enhanced TCR game rules, state
+│   │   ├── combat.go               # Damage, CRIT calculation
+│   │   └── progression.go          # EXP, Leveling
+│   ├── models/                 
+│   │   ├── player.go               # Player data structure (for persistence)
+│   │   ├── config.go               # Structures for loading troop/tower specs
 │   │   └── game_entities.go
 │   ├── network/
-│   │   ├── protocol_tcp.go   # TCP message definitions
-│   │   ├── protocol_udp.go   # UDP message definitions
-│   │   └── codec.go          # JSON encoding/decoding
+│   │   ├── protocol_tcp.go         # TCP message definitions
+│   │   ├── protocol_udp.go         # UDP message definitions
+│   │   └── codec.go                # JSON encoding/decoding
 │   └── persistence/
-│       └── storage.go        # Loading/saving JSON data
+│       └── storage.go         # Functions for loading/saving JSON data (player profiles, config)
 │ 
 │  
 │ 
-├── data/
-│   └── players_enhanced/     # Player data for this version
-├── config_enhanced/          # Game config for this version
+├── data/                     # Default directory for persistent player data
+│   └── players_enhanced/     
+├── config_enhanced/          # Default directory for game configuration files
 │   ├── troops.json
 │   └── towers.json
 ├── go.mod
@@ -153,11 +158,13 @@ enhanced-tcr-udp/
     *   [x] Create a basic `termbox-go` client application: initialize screen, display static text, handle basic key input (e.g., quit).
     *   [x] Define core data models (`models/`).
     *   [x] Define initial TCP and UDP PDU structures (`network/protocol_tcp.go`, `network/protocol_udp.go`).
+    *   [x] Implement `persistence/storage` to load dummy `config/towers.json` and `config/troops.json`.
+    *   [x] Implement basic `network/codec` for sending/receiving simple JSON messages.
 
 *   **Sprint 1: Authentication, Matchmaking (TCP) & Game Session Init**
-    *   [x] Implement user authentication over TCP (`internal/server/auth_tcp.go`).
+    *   [x] Implement user authentication over TCP (`internal/server/auth_tcp.go`) - store hashed passwords in memory or basic files initially (`internal/persistence`).
     *   [x] Implement client-side login UI (simple text input before `termbox` fully integrated for this part, or basic `termbox` input).
-    *   [x] Implement matchmaking over TCP (`internal/server/matchmaking_tcp.go`).
+    *   [X] Implement matchmaking over TCP, pair the first two authenticated users (`internal/server/matchmaking_tcp.go`).
     *   [x] Server: Upon match, create a game session, assign a UDP port/game ID, and send this info to clients via TCP.
     *   [x] Client: Receive game session info, prepare to switch to UDP for gameplay.
     *   [x] Load game configuration (towers, troops) from JSON (`internal/persistence/storage.go`).

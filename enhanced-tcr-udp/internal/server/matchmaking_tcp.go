@@ -19,10 +19,11 @@ type PlayerQueueEntry struct {
 	PlayerAccount *models.PlayerAccount
 	Connection    net.Conn
 	RequestTime   time.Time
+	MatchedChan   chan struct{} // Closed when the player is matched and notified
 }
 
 var (
-	matchmakingQueue = make(chan *PlayerQueueEntry, 2) // Buffered channel for two players
+	matchmakingQueue = make(chan *PlayerQueueEntry, 1) // Changed buffer size from 2 to 1
 	queueMutex       = &sync.Mutex{}
 	// nextUDPPort can be managed by SessionManager or a global counter for simplicity in Sprint 1
 	currentUDPPort = 8081 // Starting UDP port, to be incremented
@@ -41,10 +42,6 @@ func GetNextUDPPort() int {
 }
 
 // HandleMatchmakingRequest handles a client's request to find a match.
-// For Sprint 1, this will be a very simple implementation:
-// - The first player waits.
-// - The second player joins, a match is made, and both are notified.
-// This function will block until a match is made or a timeout (not implemented in this version).
 func HandleMatchmakingRequest(conn net.Conn, player *models.PlayerAccount) {
 	log.Printf("Player %s entered matchmaking.", player.Username)
 
@@ -52,69 +49,79 @@ func HandleMatchmakingRequest(conn net.Conn, player *models.PlayerAccount) {
 		PlayerAccount: player,
 		Connection:    conn,
 		RequestTime:   time.Now(),
+		MatchedChan:   make(chan struct{}), // Initialize the notification channel
 	}
 
-	// Try to add to queue or find a match
-	// This uses a channel as a waiting queue. A more robust system would use a dedicated queue structure.
 	select {
-	case matchmakingQueue <- queueEntry:
-		// Player added to queue, waiting for another player
-		log.Printf("Player %s is waiting in queue.", player.Username)
-		// Inform client they are searching (optional for simple version)
-		// For now, the client will just block waiting for MatchFoundResponse
-		return // The goroutine handling this connection will wait until a match is processed
-	default:
-		// Queue is full (i.e., one player is already waiting), try to match
+	case matchmakingQueue <- queueEntry: // This is the first player entering the queue
+		log.Printf("Player %s is waiting in queue. Connection will be held open.", player.Username)
+		// Wait for this player to be matched and notified.
+		// This blocks until MatchedChan is closed when this player is matched.
+		<-queueEntry.MatchedChan
+		log.Printf("Player %s has been matched and notified. Completing HandleMatchmakingRequest.", player.Username)
+		return // Now safe to return; connection will be closed by handleConnection's defer
+
+	default: // This is the second player; queue was full (P1 was waiting)
 		queueMutex.Lock()
 		select {
-		case waitingPlayer := <-matchmakingQueue:
-			queueMutex.Unlock() // Unlock early if we got a player
+		case waitingPlayer := <-matchmakingQueue: // Retrieve P1 (waitingPlayer)
+			queueMutex.Unlock() // Unlock early as we have the waiting player
 			log.Printf("Matching %s with %s", waitingPlayer.PlayerAccount.Username, player.Username)
-			// Create a game session ID
 			gameID := uuid.New().String()
 			udpPort := GetNextUDPPort()
 
-			// Create the game session using the global manager
 			gameSession := GlobalSessionManager.CreateSession(gameID, waitingPlayer.PlayerAccount, player, udpPort)
 			if gameSession == nil {
-				log.Printf("Failed to create game session for %s and %s. One or both players returned to queue.", waitingPlayer.PlayerAccount.Username, player.Username)
-				// Handle error: put both players back in queue or notify them of failure.
-				// Simple approach: try to put waitingPlayer back. Current player will also re-queue on next attempt.
-				matchmakingQueue <- waitingPlayer // Potential blocking if queue is full again, needs robust handling
+				log.Printf("Failed to create game session for %s and %s. %s (waiting player) put back in queue. %s (current player) request ends.",
+					waitingPlayer.PlayerAccount.Username, player.Username, waitingPlayer.PlayerAccount.Username, player.Username)
+				// Put waitingPlayer back into the queue. Their MatchedChan is still open, so they continue to wait.
+				matchmakingQueue <- waitingPlayer
+				// The current player (player / conn) request ends here; their connection will close.
+				// They would need to retry matchmaking.
 				return
 			}
 
 			// Notify both players
-			notifyMatch(waitingPlayer.Connection, waitingPlayer.PlayerAccount, player, gameID, udpPort, true)
-			notifyMatch(conn, player, waitingPlayer.PlayerAccount, gameID, udpPort, false)
+			notifyMatch(waitingPlayer.Connection, waitingPlayer.PlayerAccount, player, gameID, udpPort, true) // Notify P1
+			notifyMatch(conn, player, waitingPlayer.PlayerAccount, gameID, udpPort, false)                    // Notify P2
 
 			log.Printf("Match found: %s vs %s. GameID: %s, UDP Port: %d. Session created.", waitingPlayer.PlayerAccount.Username, player.Username, gameID, udpPort)
-			// gameSession.Start() // Game will be started by the session manager or game loop later
-		default:
-			queueMutex.Unlock() // Unlock if no player (should not happen if queue was full)
-			// This case should ideally not be reached if logic is correct with a 2-buffer channel
-			log.Printf("Error in matchmaking: queue was full but no waiting player found. %s is returning to queue.", player.Username)
-			// Re-add current player to queue if match fails unexpectedly
-			matchmakingQueue <- queueEntry
+
+			// After P1 (waitingPlayer) has been successfully notified, close their MatchedChan
+			// to unblock their HandleMatchmakingRequest goroutine.
+			log.Printf("Closing MatchedChan for waiting player %s to allow their handler to complete.", waitingPlayer.PlayerAccount.Username)
+			close(waitingPlayer.MatchedChan)
+
+			// P2's (current player) HandleMatchmakingRequest completes here as well.
+			log.Printf("HandleMatchmakingRequest for current player %s (P2) is completing.", player.Username)
+			return
+
+		default: // Should ideally not be reached if queue was full means a player was there.
+			queueMutex.Unlock()
+			log.Printf("Error in matchmaking: queue was full but no waiting player found. %s is being added to queue and will wait.", player.Username)
+			// This means the current player (queueEntry) will now become the waiting player.
+			matchmakingQueue <- queueEntry // Add current player to the queue
+			<-queueEntry.MatchedChan       // Wait for this player to be matched
+			log.Printf("Player %s (who was re-queued after an error) has been matched. Completing HandleMatchmakingRequest.", player.Username)
 			return
 		}
-		return
 	}
 }
 
 func notifyMatch(conn net.Conn, player *models.PlayerAccount, opponent *models.PlayerAccount, gameID string, udpPort int, isPlayerOne bool) {
 	matchResponse := network.MatchFoundResponse{
 		GameID:      gameID,
-		Opponent:    *opponent, // Sending the full opponent PlayerAccount model
+		Opponent:    *opponent,
 		UDPPort:     udpPort,
 		IsPlayerOne: isPlayerOne,
 	}
 
 	encoder := json.NewEncoder(conn)
 	if err := encoder.Encode(matchResponse); err != nil {
-		log.Printf("Error sending MatchFoundResponse to %s: %v", player.Username, err)
-		// TODO: Handle this error, e.g., try to notify the other player about the issue,
-		// or put the other player back in the queue.
+		log.Printf("Error sending MatchFoundResponse to %s: %v. This might leave the other player hanging or cause issues.", player.Username, err)
+		// If sending fails, the MatchedChan for a waiting player might not be closed if this is the critical notification.
+		// Or, if it's for P2, P1 might have been unblocked but P2 didn't get message.
+		// More robust error handling needed here for production (e.g., attempt to remove session, notify other player of failure).
 	}
 }
 

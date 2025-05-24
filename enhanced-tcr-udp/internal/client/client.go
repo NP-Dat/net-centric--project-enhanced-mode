@@ -8,9 +8,12 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"enhanced-tcr-udp/internal/models"
 	"enhanced-tcr-udp/internal/network"
+
+	"github.com/nsf/termbox-go"
 )
 
 const (
@@ -21,17 +24,39 @@ const (
 type Client struct {
 	PlayerAccount *models.PlayerAccount
 	TCPConn       net.Conn
-	// UDPConn net.UDPConn // Will be added later
+	UDPConn       *net.UDPConn // For UDP communication
+	ui            *TermboxUI   // Reference to the termbox UI
 }
 
 // NewClient creates a new client instance
-func NewClient() *Client {
-	return &Client{}
+func NewClient(ui *TermboxUI) *Client {
+	return &Client{ui: ui}
 }
 
-// Authenticate prompts the user for credentials and attempts to log in to the server.
-// It returns the player account on success, or an error.
-func (c *Client) Authenticate() (*models.PlayerAccount, error) {
+// AuthenticateWithUI prompts the user for credentials via TermboxUI and attempts to log in.
+func (c *Client) AuthenticateWithUI() (*models.PlayerAccount, error) {
+	if c.ui == nil {
+		// Fallback or error if UI is not initialized
+		log.Println("Termbox UI not available, attempting console authentication.")
+		return c.authenticateWithConsole() // Call existing console method as fallback
+	}
+
+	c.ui.ClearScreen()
+	c.ui.DisplayStaticText(1, 1, "Login Required", termbox.ColorWhite, termbox.ColorBlack)
+	username := c.ui.GetTextInput("Username: ", 1, 3, termbox.ColorWhite, termbox.ColorBlack)
+	if username == "" { // Assuming empty means ESC was pressed or input cancelled
+		return nil, fmt.Errorf("login cancelled by user")
+	}
+	password := c.ui.GetTextInput("Password: ", 1, 4, termbox.ColorWhite, termbox.ColorBlack)
+	if password == "" {
+		return nil, fmt.Errorf("login cancelled by user")
+	}
+
+	return c.performLogin(username, password)
+}
+
+// authenticateWithConsole is the original console-based authentication method.
+func (c *Client) authenticateWithConsole() (*models.PlayerAccount, error) {
 	reader := bufio.NewReader(os.Stdin)
 
 	fmt.Print("Enter username: ")
@@ -39,41 +64,47 @@ func (c *Client) Authenticate() (*models.PlayerAccount, error) {
 	username = strings.TrimSpace(username)
 
 	fmt.Print("Enter password: ")
-	// For real password input, consider using a library to hide typed characters
-	// or termbox input if it's being initialized for this stage.
-	// For simplicity with basic console input:
 	password, _ := reader.ReadString('\n')
 	password = strings.TrimSpace(password)
 
+	return c.performLogin(username, password)
+}
+
+// performLogin contains the common logic for sending login request and handling response.
+func (c *Client) performLogin(username, password string) (*models.PlayerAccount, error) {
 	conn, err := net.Dial("tcp", ServerAddressTCP)
 	if err != nil {
 		log.Printf("Failed to connect to server at %s: %v", ServerAddressTCP, err)
 		return nil, err
 	}
-	c.TCPConn = conn // Store the connection
-	// defer conn.Close() // Close should be managed by the client's lifecycle
+	c.TCPConn = conn
 
 	loginReq := network.LoginRequest{Username: username, Password: password}
-	encoder := json.NewEncoder(conn)
+	// Use TCPMessage envelope if server expects it, for now direct object.
+	encoder := json.NewEncoder(c.TCPConn)
 	if err := encoder.Encode(loginReq); err != nil {
 		log.Printf("Error sending login request: %v", err)
+		c.CloseConnections() // Close connection on error
 		return nil, err
 	}
 
-	decoder := json.NewDecoder(conn)
+	decoder := json.NewDecoder(c.TCPConn)
 	var loginResp network.LoginResponse
 	if err := decoder.Decode(&loginResp); err != nil {
 		log.Printf("Error receiving login response: %v", err)
+		c.CloseConnections()
 		return nil, err
 	}
 
 	if !loginResp.Success {
 		log.Printf("Login failed: %s", loginResp.Message)
-		return nil, fmt.Errorf("login failed: %s", loginResp.Message)
+		// Don't close connection here, server already sent response, client main loop may want to show message.
+		// c.CloseConnections() // No, let main handle this based on error.
+		return nil, fmt.Errorf("server: %s", loginResp.Message)
 	}
 
 	c.PlayerAccount = loginResp.Player
-	log.Printf("Login successful for %s. Welcome!", c.PlayerAccount.Username)
+	log.Printf("Login successful for %s.", c.PlayerAccount.Username)
 	return c.PlayerAccount, nil
 }
 
@@ -81,9 +112,14 @@ func (c *Client) Authenticate() (*models.PlayerAccount, error) {
 func (c *Client) CloseConnections() {
 	if c.TCPConn != nil {
 		c.TCPConn.Close()
+		c.TCPConn = nil
 		log.Println("TCP connection closed.")
 	}
-	// Add UDP connection closing later
+	if c.UDPConn != nil {
+		c.UDPConn.Close()
+		c.UDPConn = nil
+		log.Println("UDP connection closed.")
+	}
 }
 
 // Main client logic (TCP/UDP connection, termbox setup)
@@ -96,61 +132,142 @@ type MatchmakingInfo struct {
 	IsPlayerOne bool
 }
 
-// RequestMatchmaking sends a matchmaking request to the server and waits for a response.
-func (c *Client) RequestMatchmaking() (*MatchmakingInfo, error) {
+// RequestMatchmakingWithUI sends a matchmaking request and updates UI.
+func (c *Client) RequestMatchmakingWithUI() (*network.MatchFoundResponse, error) {
 	if c.TCPConn == nil || c.PlayerAccount == nil {
 		return nil, fmt.Errorf("client is not authenticated or connected")
 	}
 
-	log.Println("Sending matchmaking request...")
-	// The plan uses a generic TCPMessage envelope, but current server implementation
-	// doesn't show a top-level dispatcher. For Sprint 1, we assume server handles
-	// MatchmakingRequest directly after login or based on a simple sequence.
-	// If server expects a specific MatchmakingRequest struct after login implicitly,
-	// we might not need to send a separate request object if the server auto-queues.
-	// However, the plan has MatchmakingRequest, so we should send it.
+	if c.ui != nil {
+		c.ui.DisplayStaticText(1, 5, "Sending matchmaking request...", termbox.ColorYellow, termbox.ColorBlack)
+	} else {
+		log.Println("Sending matchmaking request...")
+	}
 
-	// For now, let's assume the server expects a MatchmakingRequest object.
-	// However, the `HandleMatchmakingRequest` in server code takes (conn, player)
-	// and doesn't decode a MatchmakingRequest object from the stream explicitly after initial login.
-	// It seems HandleMatchmakingRequest is intended to be called directly.
-	// This implies the server needs a dispatcher after login to route to HandleMatchmakingRequest.
-	// For Sprint 1, we'll simplify: The client expects a MatchFoundResponse after some time.
-	// Let's assume for now the server automatically puts client into matchmaking after login for simplicity,
-	// or that the server has a mechanism to expect this. The client will just wait for MatchFoundResponse.
+	// TODO (Sprint 2+): Implement explicit PDU-driven matchmaking.
+	// The client should send a network.TCPMessage with Type network.MsgTypeMatchmakingRequest
+	// and Payload network.MatchmakingRequest{PlayerID: c.PlayerAccount.Username}.
+	// The server's handleConnection would then need to decode this TCPMessage and dispatch
+	// to HandleMatchmakingRequest, instead of calling it implicitly after login.
+	// Example PDU construction:
+	// matchmakingPDU := network.TCPMessage{
+	// 	Type:    network.MsgTypeMatchmakingRequest,
+	// 	Payload: network.MatchmakingRequest{PlayerID: c.PlayerAccount.Username},
+	// }
+	// encoder := json.NewEncoder(c.TCPConn)
+	// if err := encoder.Encode(matchmakingPDU); err != nil {
+	// 	log.Printf("Error sending matchmaking PDU: %v", err)
+	// 	return nil, err
+	// }
+	// log.Println("Matchmaking PDU sent, awaiting MatchFoundResponse.")
 
-	// To align with `MatchmakingRequest` struct, the client *should* send it.
-	// The server main loop would need to decode `TCPMessage` and dispatch.
-	// Let's make the client send the request as per protocol definition.
+	// Current (Sprint 1) server directly sends MatchFoundResponse after auth completes and matchmaking happens implicitly.
+	// Server `internal/server/server.go`'s `handleConnection` calls `HandleMatchmakingRequest` directly.
+	// So client just waits for `MatchFoundResponse`.
 
-	// Correct approach: Send a MatchmakingRequest object.
-	// The server side HandleConnection should have a loop that decodes TCPMessage and routes them.
-	// Since that's not fully built on server, this client call might not be processed as expected by current server code.
-	// For now, I will *not* send a MatchmakingRequest explicitly, but instead assume the server handles matchmaking after login
-	// and the client just waits for the MatchFoundResponse. This is a temporary simplification.
-	// When the server's main connection handler is built to dispatch TCPMessage types, the client will send network.MsgTypeMatchmakingRequest.
+	if c.ui != nil {
+		c.ui.DisplayStaticText(1, 6, "Waiting for match...", termbox.ColorYellow, termbox.ColorBlack)
+	} else {
+		log.Println("Waiting for match...")
+	}
 
-	log.Println("Waiting for match...") // Client will block here
 	decoder := json.NewDecoder(c.TCPConn)
 	var matchResponse network.MatchFoundResponse
 
 	if err := decoder.Decode(&matchResponse); err != nil {
+		if c.ui != nil {
+			c.ui.DisplayStaticText(1, 7, fmt.Sprintf("Error receiving match: %v", err), termbox.ColorRed, termbox.ColorBlack)
+		}
 		log.Printf("Error receiving matchmaking response: %v", err)
 		return nil, err
 	}
 
-	log.Printf("Match found! Opponent: %s, GameID: %s, UDP Port: %d, You are PlayerOne: %t",
-		matchResponse.Opponent.Username, matchResponse.GameID, matchResponse.UDPPort, matchResponse.IsPlayerOne)
-
-	info := &MatchmakingInfo{
-		GameID:      matchResponse.GameID,
-		Opponent:    matchResponse.Opponent,
-		UDPPort:     matchResponse.UDPPort,
-		IsPlayerOne: matchResponse.IsPlayerOne,
+	if c.ui != nil {
+		// Message already displayed by main.go after this returns
 	}
-	c.PlayerAccount.GameID = matchResponse.GameID // Store GameID in player account for reference
+	log.Printf("Match found! Opponent: %s, GameID: %s, UDP Port: %d",
+		matchResponse.Opponent.Username, matchResponse.GameID, matchResponse.UDPPort)
 
-	return info, nil
+	c.PlayerAccount.GameID = matchResponse.GameID
+
+	return &matchResponse, nil
+}
+
+// SendBasicUDPMessage sends a simple string message over UDP to the game server's assigned UDP port.
+func (c *Client) SendBasicUDPMessage(gameID string, playerToken string, udpPort int, message string) (string, error) {
+	if c.PlayerAccount == nil {
+		return "", fmt.Errorf("player not authenticated")
+	}
+
+	serverAddr := fmt.Sprintf("localhost:%d", udpPort)
+	remoteAddr, err := net.ResolveUDPAddr("udp", serverAddr)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve UDP server address %s: %v", serverAddr, err)
+	}
+
+	// Establish UDP connection if not already done or if port changed (simple case: always dial)
+	// A more robust client might maintain c.UDPConn across calls if appropriate.
+	conn, err := net.DialUDP("udp", nil, remoteAddr) // nil for local address, OS will pick
+	if err != nil {
+		return "", fmt.Errorf("failed to dial UDP %s: %v", serverAddr, err)
+	}
+	defer conn.Close() // Close this specific connection after use
+	c.UDPConn = conn   // Store it, though defer closes it. For persistent conn, manage differently.
+
+	log.Printf("Sending UDP message to %s: %s", serverAddr, message)
+	udpPDU := network.UDPMessage{
+		// Seq: We are not tracking sequence numbers in this basic send yet
+		Timestamp:   time.Now(),
+		SessionID:   gameID,
+		PlayerToken: playerToken,  // Could be c.PlayerAccount.Username or a session-specific token
+		Type:        "basic_ping", // Example type
+		Payload:     message,
+	}
+	jsonData, jsonErr := json.Marshal(udpPDU)
+	if jsonErr != nil {
+		return "", fmt.Errorf("failed to marshal UDP PDU: %v", jsonErr)
+	}
+
+	_, err = conn.Write(jsonData)
+	if err != nil {
+		return "", fmt.Errorf("failed to send UDP message: %v", err)
+	}
+
+	// Wait for a response (simple echo)
+	buffer := make([]byte, 1024)
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second)) // Timeout for response
+	n, _, err := conn.ReadFromUDP(buffer)                 // Read from the connected UDP socket
+	if err != nil {
+		return "", fmt.Errorf("failed to read UDP response: %v", err)
+	}
+
+	responsePayload := string(buffer[:n])
+	log.Printf("Received UDP response: %s", responsePayload)
+	return responsePayload, nil
+}
+
+// Authenticate is the old method, preserved for now if needed or for non-UI contexts.
+func (c *Client) Authenticate() (*models.PlayerAccount, error) {
+	return c.authenticateWithConsole()
+}
+
+// RequestMatchmaking is the old method, preserved for now if needed or for non-UI contexts.
+func (c *Client) RequestMatchmaking() (*network.MatchFoundResponse, error) {
+	// This is a simplified version. The new RequestMatchmakingWithUI is preferred.
+	if c.TCPConn == nil || c.PlayerAccount == nil {
+		return nil, fmt.Errorf("client is not authenticated or connected")
+	}
+	log.Println("Waiting for match (console mode)...")
+	decoder := json.NewDecoder(c.TCPConn)
+	var matchResponse network.MatchFoundResponse
+	if err := decoder.Decode(&matchResponse); err != nil {
+		log.Printf("Error receiving matchmaking response (console): %v", err)
+		return nil, err
+	}
+	log.Printf("Match found (console)! Opponent: %s, GameID: %s, UDP Port: %d",
+		matchResponse.Opponent.Username, matchResponse.GameID, matchResponse.UDPPort)
+	c.PlayerAccount.GameID = matchResponse.GameID
+	return &matchResponse, nil
 }
 
 // Add to PlayerAccount in models/player.go: GameID string `json:"game_id,omitempty"`

@@ -1,64 +1,103 @@
 package server
 
 import (
-	"encoding/json"
-	"net"
+	"errors"
+	"log"
+	"os"
+	"sync"
 
 	"enhanced-tcr-udp/internal/models"
-	"enhanced-tcr-udp/internal/network"
 	"enhanced-tcr-udp/internal/persistence"
-
-	"log"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
-// HandleLogin handles a login request from a client over TCP.
-func HandleLogin(conn net.Conn) (*models.PlayerAccount, error) {
-	decoder := json.NewDecoder(conn)
-	encoder := json.NewEncoder(conn)
+// AuthManager handles TCP authentication for users.
+type AuthManager struct {
+	activeUsers map[string]string // Maps username to clientID (e.g., remote address)
+	mu          sync.RWMutex
+}
 
-	var loginReq network.LoginRequest
-	if err := decoder.Decode(&loginReq); err != nil {
-		log.Printf("Error decoding login request: %v", err)
-		// Attempt to send a generic error response if possible
-		_ = encoder.Encode(network.LoginResponse{Success: false, Message: "Invalid login request format"})
-		return nil, err
+// NewAuthManager creates a new authentication manager.
+func NewAuthManager() *AuthManager {
+	return &AuthManager{
+		activeUsers: make(map[string]string),
+	}
+}
+
+// Login authenticates a user or creates a new account if one doesn't exist.
+// If successful, it marks the user as active with the given clientID.
+func (am *AuthManager) Login(username, password, clientID string) (*models.PlayerAccount, error) {
+	if username == "" || password == "" {
+		return nil, errors.New("username and password cannot be empty")
 	}
 
-	log.Printf("Login attempt from username: %s", loginReq.Username)
-
-	playerAcc, err := persistence.LoadPlayerAccount(loginReq.Username)
+	acc, err := persistence.LoadPlayerAccount(username)
 	if err != nil {
-		log.Printf("Failed to load player account for %s: %v", loginReq.Username, err)
-		resp := network.LoginResponse{Success: false, Message: "User not found or error loading data."}
-		if err := encoder.Encode(resp); err != nil {
-			log.Printf("Error sending login response: %v", err)
+		if os.IsNotExist(err) {
+			// Account does not exist, create a new one
+			log.Printf("No account found for user '%s'. Creating a new account.", username)
+			newAcc := &models.PlayerAccount{
+				Username:       username,
+				HashedPassword: password, // SavePlayerAccount will hash this
+				EXP:            0,
+				Level:          1,
+			}
+			if saveErr := persistence.SavePlayerAccount(newAcc); saveErr != nil {
+				log.Printf("Error saving new player account for %s: %v", username, saveErr)
+				return nil, errors.New("error creating user account")
+			}
+			log.Printf("New account created successfully for user: %s", username)
+			acc = newAcc // Use the newly created account for subsequent login logic
+		} else {
+			// Other error loading account
+			log.Printf("Error loading player account for %s: %v", username, err)
+			return nil, errors.New("error accessing player account")
 		}
-		return nil, err
-	}
-
-	err = bcrypt.CompareHashAndPassword([]byte(playerAcc.HashedPassword), []byte(loginReq.Password))
-	if err != nil {
-		// Password does not match
-		log.Printf("Invalid password for user %s", loginReq.Username)
-		resp := network.LoginResponse{Success: false, Message: "Invalid username or password."}
-		if err := encoder.Encode(resp); err != nil {
-			log.Printf("Error sending login response: %v", err)
+	} else {
+		// Account exists, verify password
+		if err := bcrypt.CompareHashAndPassword([]byte(acc.HashedPassword), []byte(password)); err != nil {
+			log.Printf("Invalid password for user: %s", username)
+			return nil, errors.New("invalid username or password")
 		}
-		return nil, err // Or a more specific error indicating bad credentials
 	}
 
-	log.Printf("User %s logged in successfully", loginReq.Username)
-	resp := network.LoginResponse{
-		Success: true,
-		Message: "Login successful!",
-		Player:  playerAcc,
-	}
-	if err := encoder.Encode(resp); err != nil {
-		log.Printf("Error sending successful login response: %v", err)
-		return nil, err // If we can't send success, the client won't know
+	// Check and register active user
+	am.mu.Lock()
+	defer am.mu.Unlock()
+
+	if existingClientID, isLoggedIn := am.activeUsers[username]; isLoggedIn {
+		if existingClientID != clientID {
+			log.Printf("User %s already logged in from another client (%s)", username, existingClientID)
+			return nil, errors.New("user already logged in from another client")
+		}
+		// Already logged in from the same client, proceed
+		log.Printf("User %s re-confirmed login from client %s", username, clientID)
+	} else {
+		am.activeUsers[username] = clientID
+		log.Printf("User %s logged in successfully with client ID %s", username, clientID)
 	}
 
-	return playerAcc, nil
+	return acc, nil
+}
+
+// Logout removes a user from the active users list.
+func (am *AuthManager) Logout(username string) {
+	am.mu.Lock()
+	defer am.mu.Unlock()
+
+	if _, isLoggedIn := am.activeUsers[username]; isLoggedIn {
+		delete(am.activeUsers, username)
+		log.Printf("User %s logged out.", username)
+	} else {
+		log.Printf("Attempted to logout user %s who was not logged in.", username)
+	}
+}
+
+// IsUserLoggedIn checks if a user is currently logged in.
+func (am *AuthManager) IsUserLoggedIn(username string) bool {
+	am.mu.RLock()
+	defer am.mu.RUnlock()
+	_, ok := am.activeUsers[username]
+	return ok
 }
