@@ -1,31 +1,40 @@
 package client
 
 import (
+	"enhanced-tcr-udp/internal/models"
 	"fmt"
 	"log"
 
 	"github.com/nsf/termbox-go"
 )
 
+const (
+	maxEventLogMessages = 5 // Number of recent event messages to display
+)
+
 // TermboxUI holds state for the termbox interface
 type TermboxUI struct {
-	// Add state here if needed, e.g., current view, messages
-	gameTimer   int
-	player1Mana int
-	player2Mana int
-	// TODO: Add fields for tower HPs, troop positions etc.
-	// player1Towers []models.TowerDisplayInfo
-	// player2Towers []models.TowerDisplayInfo
-	// activeTroops  []models.TroopDisplayInfo
+	gameTimer    int
+	myMana       int                           // Renamed from player1Mana for clarity from client's perspective
+	opponentMana int                           // Renamed from player2Mana
+	towers       []models.TowerInstance        // All towers in the game state
+	activeTroops map[string]models.ActiveTroop // All active troops
 
-	inputLine         string  // For user commands
-	lastSelectedTroop rune    // Example: '1' for Pawn, '2' for Bishop etc.
-	client            *Client // Reference to the main client logic
+	eventLog []string // To store recent event messages
+
+	inputLine         string
+	lastSelectedTroop rune
+	client            *Client
+	// TODO: Store TroopSpec (from GameConfig) to display mana costs dynamically
 }
 
 // NewTermboxUI creates a new TermboxUI manager.
 func NewTermboxUI() *TermboxUI {
-	return &TermboxUI{}
+	return &TermboxUI{
+		activeTroops: make(map[string]models.ActiveTroop),
+		towers:       make([]models.TowerInstance, 0),
+		eventLog:     make([]string, 0, maxEventLogMessages),
+	}
 }
 
 // Init initializes the termbox screen.
@@ -48,48 +57,122 @@ func (ui *TermboxUI) DisplayStaticText(x, y int, text string, fg, bg termbox.Att
 }
 
 // UpdateGameInfo updates the game state information to be displayed.
-func (ui *TermboxUI) UpdateGameInfo(timer, p1Mana, p2Mana int) {
+func (ui *TermboxUI) UpdateGameInfo(timer, clientMana, oppMana int, troops map[string]models.ActiveTroop, allTowers []models.TowerInstance) {
 	ui.gameTimer = timer
-	ui.player1Mana = p1Mana
-	ui.player2Mana = p2Mana
-	// In a real scenario, you might lock here if accessed by multiple goroutines,
-	// but termbox operations should generally be from one goroutine.
+	ui.myMana = clientMana
+	ui.opponentMana = oppMana
+	ui.activeTroops = troops
+	ui.towers = allTowers
+}
+
+// AddEventMessage adds a message to the event log.
+func (ui *TermboxUI) AddEventMessage(message string) {
+	if len(ui.eventLog) >= maxEventLogMessages {
+		// Remove the oldest message
+		ui.eventLog = ui.eventLog[1:]
+	}
+	ui.eventLog = append(ui.eventLog, message)
+	// No direct render here, Render() will pick it up on its next call.
 }
 
 // Render draws the entire game UI based on current state.
 func (ui *TermboxUI) Render() {
 	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
 
+	currentY := 1 // Start rendering from Y=1
+
 	// Game Info Area (Top)
 	infoLine1 := fmt.Sprintf("Time: %d s", ui.gameTimer)
-	infoLine2 := fmt.Sprintf("P1 Mana: %d | P2 Mana: %d", ui.player1Mana, ui.player2Mana)
-	ui.DisplayStaticText(1, 1, infoLine1, termbox.ColorWhite, termbox.ColorBlack)
-	ui.DisplayStaticText(1, 2, infoLine2, termbox.ColorWhite, termbox.ColorBlack)
+	infoLine2 := fmt.Sprintf("My Mana: %d | Opponent Mana: %d", ui.myMana, ui.opponentMana)
+	ui.DisplayStaticText(1, currentY, infoLine1, termbox.ColorWhite, termbox.ColorBlack)
+	currentY++
+	ui.DisplayStaticText(1, currentY, infoLine2, termbox.ColorWhite, termbox.ColorBlack)
+	currentY += 2 // Add some space
 
-	// Placeholder for Player 1 Towers
-	ui.DisplayStaticText(5, 5, "[P1 GT1: HP ?/?]", termbox.ColorGreen, termbox.ColorBlack)
-	ui.DisplayStaticText(5, 7, "[P1 KT: HP ?/?]", termbox.ColorGreen, termbox.ColorBlack)
-	ui.DisplayStaticText(5, 9, "[P1 GT2: HP ?/?]", termbox.ColorGreen, termbox.ColorBlack)
+	// Display Towers
+	towerHeaderY := currentY
+	ui.DisplayStaticText(1, towerHeaderY, "--- Towers ---", termbox.ColorYellow, termbox.ColorBlack)
+	currentY++
+	if len(ui.towers) > 0 {
+		for _, tower := range ui.towers {
+			playerID := ""
+			if ui.client != nil && ui.client.PlayerAccount != nil {
+				playerID = ui.client.PlayerAccount.Username
+			}
+			fgColor := termbox.ColorWhite
+			prefix := "Opponent"
+			if tower.OwnerID == playerID {
+				fgColor = termbox.ColorGreen
+				prefix = "My"
+			} else {
+				fgColor = termbox.ColorRed
+			}
+			towerInfo := fmt.Sprintf("%s %s (ID: %s): HP %d/%d", prefix, tower.SpecID, tower.GameSpecificID, tower.CurrentHP, tower.MaxHP)
+			ui.DisplayStaticText(1, currentY, towerInfo, fgColor, termbox.ColorBlack)
+			currentY++
+		}
+	} else {
+		ui.DisplayStaticText(1, currentY, "(No tower data yet)", termbox.ColorDefault, termbox.ColorBlack)
+		currentY++
+	}
+	currentY++ // Add some space
 
-	// Placeholder for Player 2 Towers
-	ui.DisplayStaticText(40, 5, "[P2 GT1: HP ?/?]", termbox.ColorRed, termbox.ColorBlack)
-	ui.DisplayStaticText(40, 7, "[P2 KT: HP ?/?]", termbox.ColorRed, termbox.ColorBlack)
-	ui.DisplayStaticText(40, 9, "[P2 GT2: HP ?/?]", termbox.ColorRed, termbox.ColorBlack)
+	// Display Active Troops
+	troopHeaderY := currentY
+	ui.DisplayStaticText(1, troopHeaderY, "--- Active Troops ---", termbox.ColorYellow, termbox.ColorBlack)
+	currentY++
+	if len(ui.activeTroops) > 0 {
+		for id, troop := range ui.activeTroops {
+			playerID := ""
+			if ui.client != nil && ui.client.PlayerAccount != nil {
+				playerID = ui.client.PlayerAccount.Username
+			}
+			fgColor := termbox.ColorWhite
+			prefix := "Opponent's"
+			if troop.OwnerID == playerID {
+				fgColor = termbox.ColorCyan
+				prefix = "My"
+			} else {
+				fgColor = termbox.ColorMagenta
+			}
+			troopInfo := fmt.Sprintf("%s %s (ID: %s): HP %d/%d, ATK %d", prefix, troop.SpecID, id, troop.CurrentHP, troop.MaxHP, troop.CurrentATK)
+			ui.DisplayStaticText(1, currentY, troopInfo, fgColor, termbox.ColorBlack)
+			currentY++
+		}
+	} else {
+		ui.DisplayStaticText(1, currentY, "(No active troops on field)", termbox.ColorDefault, termbox.ColorBlack)
+		currentY++
+	}
+	currentY++ // Add some space
 
-	// Placeholder for troop deployment area / active troops
-	ui.DisplayStaticText(1, 12, "--- Active Troops --- (TODO)", termbox.ColorYellow, termbox.ColorBlack)
+	// Event Log Area
+	eventLogHeaderY := currentY
+	ui.DisplayStaticText(1, eventLogHeaderY, "--- Event Log ---", termbox.ColorYellow, termbox.ColorBlack)
+	currentY++
+	logStartY := currentY
+	for i, msg := range ui.eventLog {
+		if i < maxEventLogMessages { // Ensure we don't try to print too many if log somehow exceeds max
+			ui.DisplayStaticText(1, logStartY+i, msg, termbox.ColorWhite, termbox.ColorBlack)
+			currentY++
+		}
+	}
+	if len(ui.eventLog) == 0 {
+		ui.DisplayStaticText(1, currentY, "(No recent events)", termbox.ColorDefault, termbox.ColorBlack)
+		// currentY++ // Don't increment if no messages, let logStartY define the block
+	}
+	// Ensure currentY is set correctly for prompts below, accounting for the full height of the log area.
+	currentY = logStartY + maxEventLogMessages + 1 // +1 for spacing after the designated log area height
 
 	// Input Area (Bottom)
-	troopSelectionPrompt := "Deploy: [1]Pawn [2]Bishop [3]Rook [4]Knight [5]Prince [6]Queen. ESC to Deselect."
-	ui.DisplayStaticText(1, 15, troopSelectionPrompt, termbox.ColorCyan, termbox.ColorBlack)
+	troopSelectionPromptY := currentY
+	troopSelectionPrompt := "Deploy: [1]Pawn(?) [2]Bishop(?) [3]Rook(?) [4]Knight(?) [5]Prince(?) [6]Queen(?). ESC to Deselect."
+	ui.DisplayStaticText(1, troopSelectionPromptY, troopSelectionPrompt, termbox.ColorCyan, termbox.ColorBlack)
+	selectedMsgY := troopSelectionPromptY + 1
 	selectedMsg := "Selected: None"
 	if ui.lastSelectedTroop != 0 {
-		selectedMsg = fmt.Sprintf("Selected: %c (Press Enter to confirm deployment - simulated)", ui.lastSelectedTroop)
+		selectedMsg = fmt.Sprintf("Selected: %c (Press Enter to deploy)", ui.lastSelectedTroop)
 	}
-	ui.DisplayStaticText(1, 16, selectedMsg, termbox.ColorWhite, termbox.ColorBlack)
-
-	// Command line (if we had one separate from troop selection)
-	// ui.DisplayStaticText(1, 18, "> "+ui.inputLine, termbox.ColorWhite, termbox.ColorBlack)
+	ui.DisplayStaticText(1, selectedMsgY, selectedMsg, termbox.ColorWhite, termbox.ColorBlack)
 
 	termbox.Flush()
 }
@@ -124,10 +207,53 @@ mainloop:
 				}
 			case termbox.KeyEnter:
 				if ui.lastSelectedTroop != 0 {
-					// TODO: Send deploy_troop_command_udp (Sprint 3)
-					log.Printf("Simulating deployment of troop: %c", ui.lastSelectedTroop)
-					// Placeholder for actual deployment logic
-					// c.sendDeployTroopCommand(ui.lastSelectedTroop) // Needs client reference or callback
+					// Convert rune to TroopID string
+					// TODO: This mapping should come from game config or a shared model
+					troopID := ""
+					switch ui.lastSelectedTroop {
+					case '1':
+						troopID = "pawn"
+					case '2':
+						troopID = "bishop"
+					case '3':
+						troopID = "rook"
+					case '4':
+						troopID = "knight"
+					case '5':
+						troopID = "prince"
+					case '6':
+						troopID = "queen"
+					default:
+						log.Printf("Invalid troop selection: %c", ui.lastSelectedTroop)
+					}
+
+					if troopID != "" && ui.client != nil {
+						err := ui.client.SendDeployTroopCommand(troopID)
+						if err != nil {
+							log.Printf("Error sending deploy troop command: %v", err)
+							ui.AddEventMessage(fmt.Sprintf("Deploy Error: %v", err))
+						} else {
+							log.Printf("Deploy troop command sent for: %s (%c)", troopID, ui.lastSelectedTroop)
+							troopName := troopID
+							switch ui.lastSelectedTroop {
+							case '1':
+								troopName = "Pawn"
+							case '2':
+								troopName = "Bishop"
+							case '3':
+								troopName = "Rook"
+							case '4':
+								troopName = "Knight"
+							case '5':
+								troopName = "Prince"
+							case '6':
+								troopName = "Queen"
+							}
+							ui.AddEventMessage(fmt.Sprintf("Deploy command for %s sent.", troopName))
+						}
+					} else if ui.client == nil {
+						log.Println("Cannot send deploy command: client reference is nil in UI")
+					}
 					ui.lastSelectedTroop = 0 // Clear selection after attempted deployment
 				} else {
 					// Handle command input if any, from ui.inputLine

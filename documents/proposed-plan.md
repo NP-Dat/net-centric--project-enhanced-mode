@@ -100,8 +100,8 @@ This document outlines the plan to build the "Enhanced TCR" game as a separate p
 
 5.  **Persistence:**
     *   Use Go's `encoding/json` package.
-    *   Player data: Store one JSON file per player (e.g., `data/players/username.json`) or a single JSON file containing a map of all players. A single file is simpler initially, but separate files scale better if many players were expected (though not likely critical here).
-    *   Game config: Store troop and tower base stats in separate JSON files (e.g., `config/troops.json`, `config/towers.json`).
+    *   Player data: Store one JSON file per player (e.g., `data/players_enhanced/username.json`) or a single JSON file containing a map of all players. A single file is simpler initially, but separate files scale better if many players were expected (though not likely critical here).
+    *   Game config: Store troop and tower base stats in separate JSON files (e.g., `config_enhanced/troops.json`, `config_enhanced/towers.json`).
 
 **Phase 3: Project Structure (Enhanced TCR - UDP & Termbox)**
 
@@ -170,20 +170,20 @@ enhanced-tcr-udp/
     *   [x] Load game configuration (towers, troops) from JSON (`internal/persistence/storage.go`).
 
 *   **Sprint 2: Basic Real-Time Loop & Termbox UI Core (UDP)**
-    *   [ ] Server: Implement the main game loop for a session (3-minute timer).
-    *   [ ] Client: Establish UDP communication with the server for the game session.
-    *   [ ] Server: Start sending basic periodic `game_state_update_udp` (e.g., just timer, initial mana).
-    *   [ ] Client (`ui_termbox.go`):
+    *   [x] Server: Implement the main game loop for a session (3-minute timer). Auto cancel the game when 2 clients quit.
+    *   [x] Client: Establish UDP communication with the server for the game session.
+    *   [x] Server: Start sending basic periodic `game_state_update_udp` (e.g., just timer, initial mana).
+    *   [x] Client (`ui_termbox.go`):
         *   Render basic game board layout (areas for player/opponent towers, mana, timer).
         *   Display initial tower HPs, player mana, game timer based on UDP updates.
         *   Implement input handling for selecting a troop to deploy (e.g., number keys).
 
 *   **Sprint 3: Troop Deployment & Mana System (UDP)**
-    *   [ ] Client: Send `deploy_troop_command_udp` when player attempts to deploy.
-    *   [ ] Server: Handle `deploy_troop_command_udp`: check mana, validate troop, update game state.
-    *   [ ] Server: Implement MANA regeneration (1 per 2s, max 10) and update in `game_state_update_udp`.
-    *   [ ] Server: Include active troops (basic info: type, owner, HP) in `game_state_update_udp`.
-    *   [ ] Client (`ui_termbox.go`): Display player's current mana, list of available troops (with mana costs), and visually represent deployed troops on the board.
+    *   [x] Client: Send `deploy_troop_command_udp` when player attempts to deploy.
+    *   [x] Server: Handle `deploy_troop_command_udp`: check mana, validate troop, update game state.
+    *   [x] Server: Implement MANA regeneration (1 per 2s, max 10) and update in `game_state_update_udp`.
+    *   [x] Server: Include active troops (basic info: type, owner, HP) in `game_state_update_udp`.
+    *   [x] Client (`ui_termbox.go`): Display player's current mana, list of available troops (with mana costs), and visually represent deployed troops on the board.
 
 *   **Sprint 4: Continuous Combat & Targeting (UDP)**
     *   [ ] Server (`game/logic_enhanced.go`, `game/combat.go`):

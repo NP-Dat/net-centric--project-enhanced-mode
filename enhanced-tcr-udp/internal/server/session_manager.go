@@ -34,7 +34,11 @@ func (gsm *GameSessionManager) CreateSession(gameID string, player1, player2 *mo
 
 	// TODO: Load full game config (troops, towers) here or pass it to NewGameSession
 	// For now, NewGameSession will be simple.
-	session := NewGameSession(gameID, player1, player2, udpPort)
+	// Use player usernames as session tokens for now.
+	// In a more robust system, these tokens might be generated uniquely.
+	p1Token := player1.Username
+	p2Token := player2.Username
+	session := NewGameSession(gameID, player1, player2, p1Token, p2Token, udpPort)
 	if session == nil { // NewGameSession can return nil if config loading fails
 		log.Printf("Failed to create new game session %s due to initialization error.", gameID)
 		return nil

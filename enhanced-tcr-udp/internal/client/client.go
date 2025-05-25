@@ -27,6 +27,8 @@ type Client struct {
 	UDPConn       *net.UDPConn // For UDP communication
 	ServerUDPAddr *net.UDPAddr // To store the resolved server UDP address
 	ui            *TermboxUI   // Reference to the termbox UI
+	SessionToken  string       // Token for the current game session
+	IsPlayerOne   bool         // True if this client is Player 1 in the game
 }
 
 // NewClient creates a new client instance
@@ -190,10 +192,12 @@ func (c *Client) RequestMatchmakingWithUI() (*network.MatchFoundResponse, error)
 	if c.ui != nil {
 		// Message already displayed by main.go after this returns
 	}
-	log.Printf("Match found! Opponent: %s, GameID: %s, UDP Port: %d",
-		matchResponse.Opponent.Username, matchResponse.GameID, matchResponse.UDPPort)
+	log.Printf("Match found! Opponent: %s, GameID: %s, UDP Port: %d, PlayerToken: %s, IsPlayerOne: %t",
+		matchResponse.Opponent.Username, matchResponse.GameID, matchResponse.UDPPort, matchResponse.PlayerSessionToken, matchResponse.IsPlayerOne)
 
 	c.PlayerAccount.GameID = matchResponse.GameID
+	c.SessionToken = matchResponse.PlayerSessionToken // Store the session token
+	c.IsPlayerOne = matchResponse.IsPlayerOne         // Store if this client is player one
 
 	// Establish UDP connection
 	// TODO: Get server IP from config or a more robust mechanism
@@ -242,6 +246,46 @@ func (c *Client) EstablishUDPConnection(serverIP string, udpPort int) error {
 	}
 	c.UDPConn = conn
 	log.Printf("UDP 'connection' established (DialUDP) to %s", serverAddr)
+	return nil
+}
+
+// SendDeployTroopCommand sends a request to the server to deploy a specific troop.
+func (c *Client) SendDeployTroopCommand(troopID string) error {
+	if c.UDPConn == nil || c.PlayerAccount == nil || c.PlayerAccount.GameID == "" {
+		return fmt.Errorf("cannot send deploy troop command: UDP not connected, not authenticated, or not in a game")
+	}
+
+	// Construct the payload
+	deployPayload := network.DeployTroopCommandUDP{
+		TroopID: troopID,
+	}
+
+	// Construct the main UDP message
+	// TODO: Implement proper sequence number generation. For now, using timestamp.
+	udpMsg := network.UDPMessage{
+		Seq:         uint32(time.Now().UnixNano()), // Placeholder for sequence number
+		Timestamp:   time.Now(),
+		SessionID:   c.PlayerAccount.GameID,
+		PlayerToken: c.SessionToken, // Use the stored session token
+		Type:        network.UDPMsgTypeDeployTroop,
+		Payload:     deployPayload,
+	}
+
+	// Serialize the message
+	msgBytes, err := json.Marshal(udpMsg)
+	if err != nil {
+		log.Printf("Error marshalling deploy troop command: %v", err)
+		return err
+	}
+
+	// Send the message
+	_, err = c.UDPConn.Write(msgBytes)
+	if err != nil {
+		log.Printf("Error sending deploy troop command over UDP: %v", err)
+		return err
+	}
+
+	log.Printf("Sent deploy troop command for TroopID: %s", troopID)
 	return nil
 }
 
@@ -356,3 +400,5 @@ func (c *Client) RequestMatchmaking() (*network.MatchFoundResponse, error) {
 }
 
 // Add to PlayerAccount in models/player.go: GameID string `json:"game_id,omitempty"`
+
+// ListenForUDPMessages was moved to network_handler.go

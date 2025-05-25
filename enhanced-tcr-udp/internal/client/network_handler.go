@@ -2,6 +2,7 @@ package client
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"strings"
@@ -55,8 +56,54 @@ func (c *Client) ListenForUDPMessages() {
 		case network.UDPMsgTypeGameStateUpdate:
 			c.handleGameStateUpdate(udpMsg.Payload)
 		case network.UDPMsgTypeGameEvent:
-			// TODO: Implement handleGameEvent (Sprint 4+)
-			log.Printf("Received GameEvent (TODO): %+v", udpMsg.Payload)
+			var gameEventPayload network.GameEventUDP
+			payloadMap, ok := udpMsg.Payload.(map[string]interface{})
+			if !ok {
+				log.Printf("Error: GameEvent payload is not map[string]interface{}. Type: %T", udpMsg.Payload)
+				continue
+			}
+			payloadBytes, err := json.Marshal(payloadMap)
+			if err != nil {
+				log.Printf("Error re-marshalling GameEvent payload: %v", err)
+				continue
+			}
+			if err := json.Unmarshal(payloadBytes, &gameEventPayload); err != nil {
+				log.Printf("Error unmarshalling GameEventUDP payload: %v. Raw: %s", err, string(payloadBytes))
+				continue
+			}
+
+			log.Printf("Client %s received Game Event: Type=%s, Details=%v", c.PlayerAccount.Username, gameEventPayload.EventType, gameEventPayload.Details)
+
+			// Format and add to UI event log
+			if c.ui != nil {
+				message := ""
+				detailsMap, _ := gameEventPayload.Details.(map[string]interface{}) // Details are map[string]interface{}
+
+				switch gameEventPayload.EventType {
+				case "TroopDeployed":
+					playerID, _ := detailsMap["player_id"].(string)
+					troopName, _ := detailsMap["troop_name"].(string)
+					isQueen, _ := detailsMap["is_queen"].(bool)
+					if playerID == c.PlayerAccount.Username {
+						message = fmt.Sprintf("You deployed %s.", troopName)
+					} else {
+						message = fmt.Sprintf("Opponent deployed %s.", troopName)
+					}
+					if isQueen {
+						message += " (Queen ability triggered!)" // TODO: More specific message for heal in Sprint 4
+					}
+				case "DeployFailed":
+					reason, _ := detailsMap["reason"].(string)
+					message = fmt.Sprintf("Deployment failed: %s", reason)
+				// TODO: Add cases for other game events like TowerDestroyed, CritialHit etc. as they are implemented
+				default:
+					message = fmt.Sprintf("Event: %s - %v", gameEventPayload.EventType, gameEventPayload.Details)
+				}
+				if message != "" {
+					c.ui.AddEventMessage(message)
+					c.ui.Render() // Re-render immediately after adding an event message
+				}
+			}
 		default:
 			log.Printf("Received unknown UDP message type: %s", udpMsg.Type)
 		}
@@ -83,8 +130,25 @@ func (c *Client) handleGameStateUpdate(payload interface{}) {
 	// 	updateData.GameTimeRemainingSeconds, updateData.Player1Mana, updateData.Player2Mana)
 
 	if c.ui != nil {
-		c.ui.UpdateGameInfo(updateData.GameTimeRemainingSeconds, updateData.Player1Mana, updateData.Player2Mana)
-		// TODO: Update towers and troops in UI (Sprint 2/3)
+		// Determine which mana belongs to this client
+		myMana := 0
+		opponentMana := 0
+		if c.IsPlayerOne { // Assuming c.IsPlayerOne is set based on MatchFoundResponse
+			myMana = updateData.Player1Mana
+			opponentMana = updateData.Player2Mana
+		} else {
+			myMana = updateData.Player2Mana
+			opponentMana = updateData.Player1Mana
+		}
+
+		c.ui.UpdateGameInfo(
+			updateData.GameTimeRemainingSeconds,
+			myMana,
+			opponentMana,
+			updateData.ActiveTroops,
+			updateData.Towers,
+		)
+		// TODO: Update towers and troops in UI (Sprint 2/3) - This is now done by passing troops/towers to UpdateGameInfo
 		c.ui.Render() // Re-render the UI with new information
 	} else {
 		// Fallback for non-UI or headless mode if ever needed

@@ -110,10 +110,11 @@ func HandleMatchmakingRequest(conn net.Conn, player *models.PlayerAccount) {
 
 func notifyMatch(conn net.Conn, player *models.PlayerAccount, opponent *models.PlayerAccount, gameID string, udpPort int, isPlayerOne bool) {
 	matchResponse := network.MatchFoundResponse{
-		GameID:      gameID,
-		Opponent:    *opponent,
-		UDPPort:     udpPort,
-		IsPlayerOne: isPlayerOne,
+		GameID:             gameID,
+		Opponent:           *opponent,
+		UDPPort:            udpPort,
+		IsPlayerOne:        isPlayerOne,
+		PlayerSessionToken: player.Username,
 	}
 
 	encoder := json.NewEncoder(conn)

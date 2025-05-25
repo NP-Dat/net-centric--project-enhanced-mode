@@ -51,10 +51,11 @@ type LoginResponse struct {
 
 // MatchFoundResponse is sent when a match is made.
 type MatchFoundResponse struct {
-	GameID      string               `json:"game_id"`
-	Opponent    models.PlayerAccount `json:"opponent"`      // Basic info about the opponent
-	UDPPort     int                  `json:"udp_port"`      // UDP port for this game session
-	IsPlayerOne bool                 `json:"is_player_one"` // To help client identify its role initially
+	GameID             string               `json:"game_id"`
+	Opponent           models.PlayerAccount `json:"opponent"`             // Basic info about the opponent
+	UDPPort            int                  `json:"udp_port"`             // UDP port for this game session
+	IsPlayerOne        bool                 `json:"is_player_one"`        // To help client identify its role initially
+	PlayerSessionToken string               `json:"player_session_token"` // Token for this player in this session
 	// May include initial turn info or other specific game start details
 }
 
