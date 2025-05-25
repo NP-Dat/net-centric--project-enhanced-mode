@@ -28,8 +28,8 @@ func main() {
 	ui.ClearScreen()
 	ui.DisplayStaticText(1, 1, "Welcome to Enhanced TCR Client!", termbox.ColorCyan, termbox.ColorBlack)
 
-	gameClient := client.NewClient(ui)  // Pass UI to client
-	defer gameClient.CloseConnections() // Ensure connections are closed on exit
+	gameClient := client.NewClient(ui) // Pass UI to client
+	// defer gameClient.CloseConnections() // Ensure connections are closed on exit -- We will call this manually now
 
 	var player *models.PlayerAccount
 	player, err = gameClient.AuthenticateWithUI() // Modified to use UI
@@ -82,10 +82,26 @@ func main() {
 	}
 
 	ui.DisplayStaticText(1, 11, "Client is ready for game-specific UDP gameplay. Press ESC to exit this screen.", termbox.ColorYellow, termbox.ColorBlack)
-	ui.RunSimpleEvacuateLoop() // For now, just wait here
+	quitRequested := ui.RunSimpleEvacuateLoop()
 
-	// TODO: Next step would be to initiate UDP communication with the server game session
+	log.Println("Termbox loop exited.")
+
+	if quitRequested {
+		log.Println("Quit was requested. Sending PlayerQuitUDP message...")
+		if err := gameClient.SendPlayerQuitMessage(); err != nil {
+			log.Printf("Error sending player quit message from main: %v", err)
+		}
+		// Optionally, add a small delay here if issues persist, e.g., time.Sleep(100 * time.Millisecond)
+		// This gives the UDP packet a moment to be processed by the OS network stack before connections are closed.
+	}
+
+	// Connections are closed by defer gameClient.CloseConnections() when main exits.
+
 	log.Println("Exiting client application.")
+
+	// Explicitly close connections after everything, including sending quit message.
+	log.Println("Closing client connections manually...")
+	gameClient.CloseConnections()
 }
 
 /*

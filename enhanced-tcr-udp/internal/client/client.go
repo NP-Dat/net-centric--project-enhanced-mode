@@ -25,12 +25,17 @@ type Client struct {
 	PlayerAccount *models.PlayerAccount
 	TCPConn       net.Conn
 	UDPConn       *net.UDPConn // For UDP communication
+	ServerUDPAddr *net.UDPAddr // To store the resolved server UDP address
 	ui            *TermboxUI   // Reference to the termbox UI
 }
 
 // NewClient creates a new client instance
 func NewClient(ui *TermboxUI) *Client {
-	return &Client{ui: ui}
+	c := &Client{ui: ui}
+	if ui != nil {
+		ui.SetClient(c) // Pass client reference to UI
+	}
+	return c
 }
 
 // AuthenticateWithUI prompts the user for credentials via TermboxUI and attempts to log in.
@@ -190,10 +195,90 @@ func (c *Client) RequestMatchmakingWithUI() (*network.MatchFoundResponse, error)
 
 	c.PlayerAccount.GameID = matchResponse.GameID
 
+	// Establish UDP connection
+	// TODO: Get server IP from config or a more robust mechanism
+	serverIP := "127.0.0.1" // Assuming localhost for now
+	err := c.EstablishUDPConnection(serverIP, matchResponse.UDPPort)
+	if err != nil {
+		log.Printf("Failed to establish UDP connection: %v", err)
+		// Decide if this is a fatal error for matchmaking
+		return &matchResponse, fmt.Errorf("failed to establish UDP connection: %w", err)
+	}
+	log.Printf("UDP connection established to %s:%d", serverIP, matchResponse.UDPPort)
+
+	// Start listening for UDP messages in a new goroutine
+	go c.ListenForUDPMessages()
+
 	return &matchResponse, nil
 }
 
+// EstablishUDPConnection resolves the server's UDP address and prepares the UDPConn.
+// It doesn't "connect" in the TCP sense but sets up the remote address.
+func (c *Client) EstablishUDPConnection(serverIP string, udpPort int) error {
+	if c.UDPConn != nil {
+		// Close existing UDP connection if any, before creating a new one.
+		// This might be needed if the client could go through matchmaking multiple times.
+		c.UDPConn.Close()
+		c.UDPConn = nil
+	}
+
+	serverAddr := fmt.Sprintf("%s:%d", serverIP, udpPort)
+	raddr, err := net.ResolveUDPAddr("udp", serverAddr)
+	if err != nil {
+		log.Printf("Failed to resolve UDP server address %s: %v", serverAddr, err)
+		return err
+	}
+	c.ServerUDPAddr = raddr // Store the resolved remote address
+
+	// For a client, DialUDP can be used to set a default destination,
+	// allowing use of Read and Write. Or ListenUDP can be used to receive from any source
+	// and then SendTo to send to specific server.
+	// Using DialUDP here for simplicity if we assume most comms are with this server.
+	// If client needs to receive from other peers or multiple servers on same port, ListenUDP is better.
+	conn, err := net.DialUDP("udp", nil, raddr) // nil for local address, OS will pick
+	if err != nil {
+		log.Printf("Failed to dial UDP for server %s: %v", serverAddr, err)
+		return err
+	}
+	c.UDPConn = conn
+	log.Printf("UDP 'connection' established (DialUDP) to %s", serverAddr)
+	return nil
+}
+
+// SendPlayerQuitMessage informs the server that the client is quitting the game.
+func (c *Client) SendPlayerQuitMessage() error {
+	if c.UDPConn == nil || c.PlayerAccount == nil || c.PlayerAccount.GameID == "" {
+		log.Println("Cannot send quit message: UDP not connected, not authenticated, or no game ID.")
+		return fmt.Errorf("client not in a state to send quit message")
+	}
+
+	quitMsg := network.UDPMessage{
+		// Seq: Sequence numbers might be useful here if reliable quit is critical
+		Timestamp:   time.Now(),
+		SessionID:   c.PlayerAccount.GameID,
+		PlayerToken: c.PlayerAccount.Username, // Or a specific session token if used
+		Type:        network.UDPMsgTypePlayerQuit,
+		Payload:     network.PlayerQuitUDP{}, // Empty payload for now
+	}
+
+	jsonData, err := json.Marshal(quitMsg)
+	if err != nil {
+		log.Printf("Error marshalling PlayerQuitUDP message: %v", err)
+		return err
+	}
+
+	log.Printf("Sending PlayerQuitUDP message for session %s", c.PlayerAccount.GameID)
+	_, err = c.UDPConn.Write(jsonData)
+	if err != nil {
+		log.Printf("Error sending PlayerQuitUDP message: %v", err)
+		return err
+	}
+	return nil
+}
+
 // SendBasicUDPMessage sends a simple string message over UDP to the game server's assigned UDP port.
+// This function seems to be for a basic ping and creates its own temporary connection.
+// For game state, we'll likely use the persistent c.UDPConn.
 func (c *Client) SendBasicUDPMessage(gameID string, playerToken string, udpPort int, message string) (string, error) {
 	if c.PlayerAccount == nil {
 		return "", fmt.Errorf("player not authenticated")
@@ -212,7 +297,7 @@ func (c *Client) SendBasicUDPMessage(gameID string, playerToken string, udpPort 
 		return "", fmt.Errorf("failed to dial UDP %s: %v", serverAddr, err)
 	}
 	defer conn.Close() // Close this specific connection after use
-	c.UDPConn = conn   // Store it, though defer closes it. For persistent conn, manage differently.
+	// c.UDPConn = conn   // DO NOT OVERWRITE THE MAIN GAME UDP CONNECTION
 
 	log.Printf("Sending UDP message to %s: %s", serverAddr, message)
 	udpPDU := network.UDPMessage{

@@ -21,6 +21,7 @@ const (
 	UDPMsgTypePlayerInput     = "player_input_udp" // Generic placeholder
 	UDPMsgTypeGameStateUpdate = "game_state_update_udp"
 	UDPMsgTypeGameEvent       = "game_event_udp"
+	UDPMsgTypePlayerQuit      = "player_quit_udp" // New: Client signals quit
 	// Add other UDP message types here
 )
 
@@ -37,6 +38,12 @@ type DeployTroopCommandUDP struct {
 type PlayerInputUDP struct {
 	InputType string      `json:"input_type"` // e.g., "use_special_ability"
 	Details   interface{} `json:"details"`    // Command-specific details
+}
+
+// PlayerQuitUDP is sent by a client to signal they are quitting the game session.
+// It currently has no additional payload beyond what's in UDPMessage.
+type PlayerQuitUDP struct {
+	// No specific fields needed for now, PlayerToken in UDPMessage is enough
 }
 
 // --- Server to Client (S2C) UDP Messages ---

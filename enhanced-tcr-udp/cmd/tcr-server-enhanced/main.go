@@ -16,7 +16,7 @@ func main() {
 
 	// Start the global UDP echo server (optional, for basic UDP tests)
 	// This runs on a different port than game-specific UDP.
-	go server.StartGlobalUDPEchoServer("localhost:8081")
+	go server.StartGlobalUDPEchoServer("localhost:8008")
 
 	// Channel to listen for OS signals for graceful shutdown
 	sigChan := make(chan os.Signal, 1)

@@ -35,10 +35,14 @@ func (gsm *GameSessionManager) CreateSession(gameID string, player1, player2 *mo
 	// TODO: Load full game config (troops, towers) here or pass it to NewGameSession
 	// For now, NewGameSession will be simple.
 	session := NewGameSession(gameID, player1, player2, udpPort)
+	if session == nil { // NewGameSession can return nil if config loading fails
+		log.Printf("Failed to create new game session %s due to initialization error.", gameID)
+		return nil
+	}
 	gsm.sessions[gameID] = session
 
 	log.Printf("Game session %s created for %s and %s on UDP port %d", gameID, player1.Username, player2.Username, udpPort)
-	// session.Start() // Game loop will be started here or by an external trigger
+	go session.Start() // Start the game loop in a new goroutine
 	return session
 }
 
