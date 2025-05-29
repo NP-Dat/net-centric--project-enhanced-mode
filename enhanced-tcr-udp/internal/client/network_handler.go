@@ -3,7 +3,8 @@ package client
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+
+	// "log"
 	"net"
 	"strings"
 
@@ -17,10 +18,10 @@ import (
 // It should be run in a goroutine.
 func (c *Client) ListenForUDPMessages() {
 	if c.UDPConn == nil {
-		log.Println("UDP connection is not established. Cannot listen for UDP messages.")
+		// log.Println("UDP connection is not established. Cannot listen for UDP messages.")
 		return
 	}
-	log.Println("Starting to listen for UDP messages from server...")
+	// log.Println("Starting to listen for UDP messages from server...")
 
 	buffer := make([]byte, 2048) // Adjust buffer size as needed for expected message sizes
 
@@ -31,20 +32,20 @@ func (c *Client) ListenForUDPMessages() {
 			// This can happen when the client is shutting down or the connection is intentionally closed
 			netErr, ok := err.(net.Error)
 			if ok && netErr.Timeout() {
-				log.Println("UDP read timeout. Continuing to listen...")
+				// log.Println("UDP read timeout. Continuing to listen...")
 				continue
 			}
 			if strings.Contains(err.Error(), "use of closed network connection") {
-				log.Println("UDP connection closed. Stopping listener.")
+				// log.Println("UDP connection closed. Stopping listener.")
 				return // Exit goroutine
 			}
-			log.Printf("Error reading from UDP: %v. Listener might stop.", err)
+			// log.Printf("Error reading from UDP: %v. Listener might stop.", err)
 			return // Or handle error more gracefully, e.g. attempt to re-establish for some errors
 		}
 
 		var udpMsg network.UDPMessage
 		if err := json.Unmarshal(buffer[:n], &udpMsg); err != nil {
-			log.Printf("Error unmarshalling UDP message: %v. Raw: %s", err, string(buffer[:n]))
+			// log.Printf("Error unmarshalling UDP message: %v. Raw: %s", err, string(buffer[:n]))
 			continue
 		}
 
@@ -59,20 +60,20 @@ func (c *Client) ListenForUDPMessages() {
 			var gameEventPayload network.GameEventUDP
 			payloadMap, ok := udpMsg.Payload.(map[string]interface{})
 			if !ok {
-				log.Printf("Error: GameEvent payload is not map[string]interface{}. Type: %T", udpMsg.Payload)
+				// log.Printf("Error: GameEvent payload is not map[string]interface{}. Type: %T", udpMsg.Payload)
 				continue
 			}
 			payloadBytes, err := json.Marshal(payloadMap)
 			if err != nil {
-				log.Printf("Error re-marshalling GameEvent payload: %v", err)
+				// log.Printf("Error re-marshalling GameEvent payload: %v", err)
 				continue
 			}
 			if err := json.Unmarshal(payloadBytes, &gameEventPayload); err != nil {
-				log.Printf("Error unmarshalling GameEventUDP payload: %v. Raw: %s", err, string(payloadBytes))
+				// log.Printf("Error unmarshalling GameEventUDP payload: %v. Raw: %s", err, string(payloadBytes))
 				continue
 			}
 
-			log.Printf("Client %s received Game Event: Type=%s, Details=%v", c.PlayerAccount.Username, gameEventPayload.EventType, gameEventPayload.Details)
+			// log.Printf("Client %s received Game Event: Type=%s, Details=%v", c.PlayerAccount.Username, gameEventPayload.EventType, gameEventPayload.Details)
 
 			// Format and add to UI event log
 			if c.ui != nil {
@@ -149,7 +150,7 @@ func (c *Client) ListenForUDPMessages() {
 				}
 			}
 		default:
-			log.Printf("Received unknown UDP message type: %s", udpMsg.Type)
+			// log.Printf("Received unknown UDP message type: %s", udpMsg.Type)
 		}
 	}
 }
@@ -160,13 +161,13 @@ func (c *Client) handleGameStateUpdate(payload interface{}) {
 	// For more type safety, remarshaling is often cleaner if performance isn't critical.
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		log.Printf("Error marshaling GameStateUpdate payload: %v", err)
+		// log.Printf("Error marshaling GameStateUpdate payload: %v", err)
 		return
 	}
 
 	var updateData network.GameStateUpdateUDP
 	if err := json.Unmarshal(payloadBytes, &updateData); err != nil {
-		log.Printf("Error unmarshalling GameStateUpdateUDP: %v", err)
+		// log.Printf("Error unmarshalling GameStateUpdateUDP: %v", err)
 		return
 	}
 
@@ -196,7 +197,7 @@ func (c *Client) handleGameStateUpdate(payload interface{}) {
 		c.ui.Render() // Re-render the UI with new information
 	} else {
 		// Fallback for non-UI or headless mode if ever needed
-		log.Printf("Received GameStateUpdate: Timer=%d, P1_Mana=%d", updateData.GameTimeRemainingSeconds, updateData.Player1Mana)
+		// log.Printf("Received GameStateUpdate: Timer=%d, P1_Mana=%d", updateData.GameTimeRemainingSeconds, updateData.Player1Mana)
 	}
 	// TODO: Further process the game state, update local client model, etc.
 }

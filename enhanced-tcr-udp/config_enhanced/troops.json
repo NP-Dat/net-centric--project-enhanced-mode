@@ -47,7 +47,7 @@
     "id": "prince",
     "name": "Prince",
     "base_hp": 500,
-    "base_atk": 800,
+    "base_atk": 400,
     "base_def": 300,
     "mana_cost": 6,
     "exp_yield": 50,

@@ -968,5 +968,6 @@ func (gs *GameSession) sendGameStateToAllPlayers() {
 	// This is a placeholder. The actual implementation should gather game state data
 	// and send it to all connected players.
 	// For now, we'll just log the call.
-	log.Printf("[GameSession %s] Sending game state to all players.", gs.ID)
+
+	// log.Printf("[GameSession %s] Sending game state to all players.", gs.ID)
 }

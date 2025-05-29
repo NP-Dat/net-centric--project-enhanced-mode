@@ -4,7 +4,8 @@ import (
 	"enhanced-tcr-udp/internal/models"
 	"enhanced-tcr-udp/internal/network" // Added for network.GameOverResults
 	"fmt"
-	"log"
+
+	// "log"
 
 	"github.com/nsf/termbox-go"
 )
@@ -59,7 +60,7 @@ func (ui *TermboxUI) SetClient(c *Client) {
 
 // SetCurrentView changes the current UI view (e.g., game, game_over).
 func (ui *TermboxUI) SetCurrentView(view UIView) {
-	log.Printf("UI View changing from %v to %v", ui.currentView, view)
+	// log.Printf("UI View changing from %v to %v", ui.currentView, view)
 	ui.currentView = view
 	ui.ClearScreen() // Clear screen when view changes
 	// ui.Render() // Render immediately after view change - let the main loop control render calls.
@@ -68,7 +69,7 @@ func (ui *TermboxUI) SetCurrentView(view UIView) {
 // SetGameOverDetails stores the results to be displayed on the game over screen.
 func (ui *TermboxUI) SetGameOverDetails(results network.GameOverResults) {
 	ui.gameOverDetails = results
-	log.Printf("Game over details set in UI: Outcome %s, EXP %d", results.Outcome, results.EXPChange)
+	// log.Printf("Game over details set in UI: Outcome %s, EXP %d", results.Outcome, results.EXPChange)
 }
 
 // Init initializes the termbox screen.
@@ -324,9 +325,9 @@ mainloop:
 			case termbox.KeyEsc:
 				if ui.lastSelectedTroop != 0 {
 					ui.lastSelectedTroop = 0 // Deselect troop
-					log.Println("Troop selection cleared.")
+					// log.Println("Troop selection cleared.")
 				} else {
-					log.Println("ESC key pressed. Quit requested from UI loop.")
+					// log.Println("ESC key pressed. Quit requested from UI loop.")
 					quitRequested = true // Signal quit
 					// No longer sending quit message from here
 					break mainloop
@@ -350,16 +351,16 @@ mainloop:
 					case '6':
 						troopID = "queen"
 					default:
-						log.Printf("Invalid troop selection: %c", ui.lastSelectedTroop)
+						// log.Printf("Invalid troop selection: %c", ui.lastSelectedTroop)
 					}
 
 					if troopID != "" && ui.client != nil {
 						err := ui.client.SendDeployTroopCommand(troopID)
 						if err != nil {
-							log.Printf("Error sending deploy troop command: %v", err)
+							// log.Printf("Error sending deploy troop command: %v", err)
 							ui.AddEventMessage(fmt.Sprintf("Deploy Error: %v", err))
 						} else {
-							log.Printf("Deploy troop command sent for: %s (%c)", troopID, ui.lastSelectedTroop)
+							// log.Printf("Deploy troop command sent for: %s (%c)", troopID, ui.lastSelectedTroop)
 							troopName := troopID
 							switch ui.lastSelectedTroop {
 							case '1':
@@ -378,35 +379,35 @@ mainloop:
 							ui.AddEventMessage(fmt.Sprintf("Deploy command for %s sent.", troopName))
 						}
 					} else if ui.client == nil {
-						log.Println("Cannot send deploy command: client reference is nil in UI")
+						// log.Println("Cannot send deploy command: client reference is nil in UI")
 					}
 					ui.lastSelectedTroop = 0 // Clear selection after attempted deployment
 				} else {
 					// Handle command input if any, from ui.inputLine
-					log.Printf("Enter pressed. Current input (if any): %s", ui.inputLine)
+					// log.Printf("Enter pressed. Current input (if any): %s", ui.inputLine)
 					ui.inputLine = "" // Clear input line
 				}
 			default:
 				// Check for troop selection keys '1' through '6'
 				if ev.Ch >= '1' && ev.Ch <= '6' {
 					ui.lastSelectedTroop = ev.Ch
-					log.Printf("Troop %c selected.", ui.lastSelectedTroop)
+					// log.Printf("Troop %c selected.", ui.lastSelectedTroop)
 				} else if ev.Ch != 0 {
 					// Append to general input line if not a troop selection
 					// ui.inputLine += string(ev.Ch)
-					log.Printf("Other key: %c", ev.Ch) // For debugging other inputs
+					// log.Printf("Other key: %c", ev.Ch) // For debugging other inputs
 				}
 				// For backspace on ui.inputLine etc., more complex input handling would be needed here
 			}
 			ui.Render() // Re-render after any key press that changes state
 
 		case termbox.EventResize:
-			log.Println("Screen resized. Redrawing.")
+			// log.Println("Screen resized. Redrawing.")
 			ui.ClearScreen()
 			ui.DisplayStaticText(1, 1, "Basic Termbox UI Active. Press ESC to quit. (Resized)", termbox.ColorWhite, termbox.ColorBlack)
 
 		case termbox.EventError:
-			log.Printf("Termbox event error: %v", ev.Err)
+			// log.Printf("Termbox event error: %v", ev.Err)
 			break mainloop // Exit on error, quitRequested will be false
 		}
 	}
