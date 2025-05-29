@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"strings"
@@ -44,7 +43,7 @@ func NewClient(ui *TermboxUI) *Client {
 func (c *Client) AuthenticateWithUI() (*models.PlayerAccount, error) {
 	if c.ui == nil {
 		// Fallback or error if UI is not initialized
-		log.Println("Termbox UI not available, attempting console authentication.")
+		// log.Println("Termbox UI not available, attempting console authentication.")
 		return c.authenticateWithConsole() // Call existing console method as fallback
 	}
 
@@ -81,7 +80,7 @@ func (c *Client) authenticateWithConsole() (*models.PlayerAccount, error) {
 func (c *Client) performLogin(username, password string) (*models.PlayerAccount, error) {
 	conn, err := net.Dial("tcp", ServerAddressTCP)
 	if err != nil {
-		log.Printf("Failed to connect to server at %s: %v", ServerAddressTCP, err)
+		// log.Printf("Failed to connect to server at %s: %v", ServerAddressTCP, err)
 		return nil, err
 	}
 	c.TCPConn = conn
@@ -90,7 +89,7 @@ func (c *Client) performLogin(username, password string) (*models.PlayerAccount,
 	// Use TCPMessage envelope if server expects it, for now direct object.
 	encoder := json.NewEncoder(c.TCPConn)
 	if err := encoder.Encode(loginReq); err != nil {
-		log.Printf("Error sending login request: %v", err)
+		// log.Printf("Error sending login request: %v", err)
 		c.CloseConnections() // Close connection on error
 		return nil, err
 	}
@@ -98,20 +97,20 @@ func (c *Client) performLogin(username, password string) (*models.PlayerAccount,
 	decoder := json.NewDecoder(c.TCPConn)
 	var loginResp network.LoginResponse
 	if err := decoder.Decode(&loginResp); err != nil {
-		log.Printf("Error receiving login response: %v", err)
+		// log.Printf("Error receiving login response: %v", err)
 		c.CloseConnections()
 		return nil, err
 	}
 
 	if !loginResp.Success {
-		log.Printf("Login failed: %s", loginResp.Message)
+		// log.Printf("Login failed: %s", loginResp.Message)
 		// Don't close connection here, server already sent response, client main loop may want to show message.
 		// c.CloseConnections() // No, let main handle this based on error.
 		return nil, fmt.Errorf("server: %s", loginResp.Message)
 	}
 
 	c.PlayerAccount = loginResp.Player
-	log.Printf("Login successful for %s.", c.PlayerAccount.Username)
+	// log.Printf("Login successful for %s.", c.PlayerAccount.Username)
 	return c.PlayerAccount, nil
 }
 
@@ -120,12 +119,12 @@ func (c *Client) CloseConnections() {
 	if c.TCPConn != nil {
 		c.TCPConn.Close()
 		c.TCPConn = nil
-		log.Println("TCP connection closed.")
+		// log.Println("TCP connection closed.")
 	}
 	if c.UDPConn != nil {
 		c.UDPConn.Close()
 		c.UDPConn = nil
-		log.Println("UDP connection closed.")
+		// log.Println("UDP connection closed.")
 	}
 }
 
@@ -148,7 +147,7 @@ func (c *Client) RequestMatchmakingWithUI() (*network.MatchFoundResponse, error)
 	if c.ui != nil {
 		c.ui.DisplayStaticText(1, 5, "Sending matchmaking request...", termbox.ColorYellow, termbox.ColorBlack)
 	} else {
-		log.Println("Sending matchmaking request...")
+		// log.Println("Sending matchmaking request...")
 	}
 
 	// TODO (Sprint 2+): Implement explicit PDU-driven matchmaking.
@@ -175,7 +174,7 @@ func (c *Client) RequestMatchmakingWithUI() (*network.MatchFoundResponse, error)
 	if c.ui != nil {
 		c.ui.DisplayStaticText(1, 6, "Waiting for match...", termbox.ColorYellow, termbox.ColorBlack)
 	} else {
-		log.Println("Waiting for match...")
+		// log.Println("Waiting for match...")
 	}
 
 	decoder := json.NewDecoder(c.TCPConn)
@@ -185,15 +184,15 @@ func (c *Client) RequestMatchmakingWithUI() (*network.MatchFoundResponse, error)
 		if c.ui != nil {
 			c.ui.DisplayStaticText(1, 7, fmt.Sprintf("Error receiving match: %v", err), termbox.ColorRed, termbox.ColorBlack)
 		}
-		log.Printf("Error receiving matchmaking response: %v", err)
+		// log.Printf("Error receiving matchmaking response: %v", err)
 		return nil, err
 	}
 
 	if c.ui != nil {
 		// Message already displayed by main.go after this returns
 	}
-	log.Printf("Match found! Opponent: %s, GameID: %s, UDP Port: %d, PlayerToken: %s, IsPlayerOne: %t",
-		matchResponse.Opponent.Username, matchResponse.GameID, matchResponse.UDPPort, matchResponse.PlayerSessionToken, matchResponse.IsPlayerOne)
+	// log.Printf("Match found! Opponent: %s, GameID: %s, UDP Port: %d, PlayerToken: %s, IsPlayerOne: %t",
+	// 	matchResponse.Opponent.Username, matchResponse.GameID, matchResponse.UDPPort, matchResponse.PlayerSessionToken, matchResponse.IsPlayerOne)
 
 	c.PlayerAccount.GameID = matchResponse.GameID
 	c.SessionToken = matchResponse.PlayerSessionToken // Store the session token
@@ -204,11 +203,11 @@ func (c *Client) RequestMatchmakingWithUI() (*network.MatchFoundResponse, error)
 	serverIP := "127.0.0.1" // Assuming localhost for now
 	err := c.EstablishUDPConnection(serverIP, matchResponse.UDPPort)
 	if err != nil {
-		log.Printf("Failed to establish UDP connection: %v", err)
+		// log.Printf("Failed to establish UDP connection: %v", err)
 		// Decide if this is a fatal error for matchmaking
 		return &matchResponse, fmt.Errorf("failed to establish UDP connection: %w", err)
 	}
-	log.Printf("UDP connection established to %s:%d", serverIP, matchResponse.UDPPort)
+	// log.Printf("UDP connection established to %s:%d", serverIP, matchResponse.UDPPort)
 
 	// Start listening for UDP messages in a new goroutine
 	go c.ListenForUDPMessages()
@@ -229,7 +228,7 @@ func (c *Client) EstablishUDPConnection(serverIP string, udpPort int) error {
 	serverAddr := fmt.Sprintf("%s:%d", serverIP, udpPort)
 	raddr, err := net.ResolveUDPAddr("udp", serverAddr)
 	if err != nil {
-		log.Printf("Failed to resolve UDP server address %s: %v", serverAddr, err)
+		// log.Printf("Failed to resolve UDP server address %s: %v", serverAddr, err)
 		return err
 	}
 	c.ServerUDPAddr = raddr // Store the resolved remote address
@@ -241,11 +240,11 @@ func (c *Client) EstablishUDPConnection(serverIP string, udpPort int) error {
 	// If client needs to receive from other peers or multiple servers on same port, ListenUDP is better.
 	conn, err := net.DialUDP("udp", nil, raddr) // nil for local address, OS will pick
 	if err != nil {
-		log.Printf("Failed to dial UDP for server %s: %v", serverAddr, err)
+		// log.Printf("Failed to dial UDP for server %s: %v", serverAddr, err)
 		return err
 	}
 	c.UDPConn = conn
-	log.Printf("UDP 'connection' established (DialUDP) to %s", serverAddr)
+	// log.Printf("UDP 'connection' established (DialUDP) to %s", serverAddr)
 	return nil
 }
 
@@ -274,25 +273,25 @@ func (c *Client) SendDeployTroopCommand(troopID string) error {
 	// Serialize the message
 	msgBytes, err := json.Marshal(udpMsg)
 	if err != nil {
-		log.Printf("Error marshalling deploy troop command: %v", err)
+		// log.Printf("Error marshalling deploy troop command: %v", err)
 		return err
 	}
 
 	// Send the message
 	_, err = c.UDPConn.Write(msgBytes)
 	if err != nil {
-		log.Printf("Error sending deploy troop command over UDP: %v", err)
+		// log.Printf("Error sending deploy troop command over UDP: %v", err)
 		return err
 	}
 
-	log.Printf("Sent deploy troop command for TroopID: %s", troopID)
+	// log.Printf("Sent deploy troop command for TroopID: %s", troopID)
 	return nil
 }
 
 // SendPlayerQuitMessage informs the server that the client is quitting the game.
 func (c *Client) SendPlayerQuitMessage() error {
 	if c.UDPConn == nil || c.PlayerAccount == nil || c.PlayerAccount.GameID == "" {
-		log.Println("Cannot send quit message: UDP not connected, not authenticated, or no game ID.")
+		// log.Println("Cannot send quit message: UDP not connected, not authenticated, or no game ID.")
 		return fmt.Errorf("client not in a state to send quit message")
 	}
 
@@ -307,14 +306,14 @@ func (c *Client) SendPlayerQuitMessage() error {
 
 	jsonData, err := json.Marshal(quitMsg)
 	if err != nil {
-		log.Printf("Error marshalling PlayerQuitUDP message: %v", err)
+		// log.Printf("Error marshalling PlayerQuitUDP message: %v", err)
 		return err
 	}
 
-	log.Printf("Sending PlayerQuitUDP message for session %s", c.PlayerAccount.GameID)
+	// log.Printf("Sending PlayerQuitUDP message for session %s", c.PlayerAccount.GameID)
 	_, err = c.UDPConn.Write(jsonData)
 	if err != nil {
-		log.Printf("Error sending PlayerQuitUDP message: %v", err)
+		// log.Printf("Error sending PlayerQuitUDP message: %v", err)
 		return err
 	}
 	return nil
@@ -343,7 +342,7 @@ func (c *Client) SendBasicUDPMessage(gameID string, playerToken string, udpPort 
 	defer conn.Close() // Close this specific connection after use
 	// c.UDPConn = conn   // DO NOT OVERWRITE THE MAIN GAME UDP CONNECTION
 
-	log.Printf("Sending UDP message to %s: %s", serverAddr, message)
+	// log.Printf("Sending UDP message to %s: %s", serverAddr, message)
 	udpPDU := network.UDPMessage{
 		// Seq: We are not tracking sequence numbers in this basic send yet
 		Timestamp:   time.Now(),
@@ -371,7 +370,7 @@ func (c *Client) SendBasicUDPMessage(gameID string, playerToken string, udpPort 
 	}
 
 	responsePayload := string(buffer[:n])
-	log.Printf("Received UDP response: %s", responsePayload)
+	// log.Printf("Received UDP response: %s", responsePayload)
 	return responsePayload, nil
 }
 
@@ -386,15 +385,15 @@ func (c *Client) RequestMatchmaking() (*network.MatchFoundResponse, error) {
 	if c.TCPConn == nil || c.PlayerAccount == nil {
 		return nil, fmt.Errorf("client is not authenticated or connected")
 	}
-	log.Println("Waiting for match (console mode)...")
+	// log.Println("Waiting for match (console mode)...")
 	decoder := json.NewDecoder(c.TCPConn)
 	var matchResponse network.MatchFoundResponse
 	if err := decoder.Decode(&matchResponse); err != nil {
-		log.Printf("Error receiving matchmaking response (console): %v", err)
+		// log.Printf("Error receiving matchmaking response (console): %v", err)
 		return nil, err
 	}
-	log.Printf("Match found (console)! Opponent: %s, GameID: %s, UDP Port: %d",
-		matchResponse.Opponent.Username, matchResponse.GameID, matchResponse.UDPPort)
+	// log.Printf("Match found (console)! Opponent: %s, GameID: %s, UDP Port: %d",
+	// 	matchResponse.Opponent.Username, matchResponse.GameID, matchResponse.UDPPort)
 	c.PlayerAccount.GameID = matchResponse.GameID
 	return &matchResponse, nil
 }
