@@ -195,18 +195,18 @@ enhanced-tcr-udp/
     *   [x] Client (`ui_termbox.go`): Update HP displays for towers and troops dynamically. Display game events from server.
 
 *   **Sprint 5: Win Conditions, EXP/Leveling & Results**
-    *   [ ] Server: Implement win condition checks (King Tower destruction, timeout tower count).
-    *   [ ] Server: Upon game end, calculate EXP earned (tower destruction + win/draw bonus).
-    *   [ ] Server: Update player EXP/Level in persisted data (`internal/persistence/storage.go`).
-    *   [ ] Server: Send `game_over_results` message to clients.
-    *   [ ] Client: Handle `game_over_results` and display outcome, EXP earned, and any level-up message in `termbox-go`.
-    *   [ ] Ensure player levels correctly influence troop/tower stats at the start of the next game.
+    *   [x] Server: Implement win condition checks (King Tower destruction, timeout tower count).
+    *   [x] Server: Upon game end, calculate EXP earned (tower destruction + win/draw bonus).
+    *   [x] Server: Update player EXP/Level in persisted data (`internal/persistence/storage.go`).
+    *   [x] Server: Send `game_over_results` message to clients.
+    *   [x] Client: Handle `game_over_results` and display outcome, EXP earned, and any level-up message in `termbox-go`.
+    *   [x] Ensure player levels correctly influence troop/tower stats at the start of the next game.
 
 *   **Sprint 6: UDP Reliability, Refinements & Testing**
-    *   [ ] Implement sequence numbers for UDP messages if not already done, especially for commands like `deploy_troop_command_udp`. Consider simple ACK mechanism for critical UDP commands if packet loss is problematic.
-    *   [ ] Refine `termbox-go` UI for clarity, responsiveness, and better visual feedback.
-    *   [ ] Add comprehensive error handling for network issues (TCP/UDP), invalid inputs.
-    *   [ ] Conduct thorough testing, including simulating UDP packet loss/reordering if possible.
+    *   [x] Implement sequence numbers for UDP messages if not already done, especially for commands like `deploy_troop_command_udp`. Consider simple ACK mechanism for critical UDP commands if packet loss is problematic.
+    *   [x] Refine `termbox-go` UI for clarity, responsiveness, and better visual feedback.
+    *   [x] Add comprehensive error handling for network issues (TCP/UDP), invalid inputs.
+    *   [x] Conduct thorough testing, including simulating UDP packet loss/reordering if possible.
 
 **Phase 5: Testing Strategy (Enhanced TCR - UDP & Termbox)**
 

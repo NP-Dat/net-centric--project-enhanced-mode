@@ -22,6 +22,7 @@ const (
 	UDPMsgTypeGameStateUpdate = "game_state_update_udp"
 	UDPMsgTypeGameEvent       = "game_event_udp"
 	UDPMsgTypePlayerQuit      = "player_quit_udp" // New: Client signals quit
+	UDPMsgTypeCommandAck      = "command_ack_udp" // New: Server acknowledges a critical client command
 	// Add other UDP message types here
 
 	// Game Event Types (for GameEventUDP.EventType and server-side gs.sendGameEventToAllPlayers)
@@ -57,6 +58,11 @@ type PlayerQuitUDP struct {
 }
 
 // --- Server to Client (S2C) UDP Messages ---
+
+// CommandAckUDP is sent by the server to acknowledge a critical command from the client.
+type CommandAckUDP struct {
+	AckSeq uint32 `json:"ack_seq"` // Sequence number of the client's command being acknowledged
+}
 
 // GameStateUpdateUDP contains the current state of the game.
 // This can be a full snapshot or a delta.

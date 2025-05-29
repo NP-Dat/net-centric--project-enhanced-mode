@@ -88,8 +88,8 @@ func HandleMatchmakingRequest(conn net.Conn, player *models.PlayerAccount) {
 			log.Printf("Match found: %s vs %s. GameID: %s, UDP Port: %d. Session created.", waitingPlayer.PlayerAccount.Username, player.Username, gameID, udpPort)
 			go handleGameResults(resultsChan, waitingPlayer, queueEntry, gameID) // Pass queueEntry for P2
 
-			notifyMatch(waitingPlayer.Connection, waitingPlayer.PlayerAccount, player, gameID, udpPort, true)
-			notifyMatch(conn, player, waitingPlayer.PlayerAccount, gameID, udpPort, false)
+			notifyMatch(waitingPlayer.Connection, waitingPlayer.PlayerAccount, player, gameID, udpPort, true, gameSession.Config)
+			notifyMatch(conn, player, waitingPlayer.PlayerAccount, gameID, udpPort, false, gameSession.Config)
 
 			log.Printf("Closing MatchedChan for waiting player %s to allow their handler to proceed with game conclusion wait.", waitingPlayer.PlayerAccount.Username)
 			close(waitingPlayer.MatchedChan)
@@ -166,13 +166,14 @@ func handleGameResults(resultsChan <-chan network.GameResultInfo, p1Entry *Playe
 	// and then its defer closes the GameConcludedChans, which unblocks the HandleMatchmakingRequest calls.
 }
 
-func notifyMatch(conn net.Conn, player *models.PlayerAccount, opponent *models.PlayerAccount, gameID string, udpPort int, isPlayerOne bool) {
+func notifyMatch(conn net.Conn, player *models.PlayerAccount, opponent *models.PlayerAccount, gameID string, udpPort int, isPlayerOne bool, gameConfig models.GameConfig) {
 	matchResponse := network.MatchFoundResponse{
 		GameID:             gameID,
 		Opponent:           *opponent,
 		UDPPort:            udpPort,
 		IsPlayerOne:        isPlayerOne,
 		PlayerSessionToken: player.Username,
+		GameConfig:         gameConfig,
 	}
 
 	encoder := json.NewEncoder(conn)

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"enhanced-tcr-udp/internal/models"
@@ -18,22 +19,41 @@ import (
 
 const (
 	ServerAddressTCP = "localhost:8080" // Assuming server runs on this TCP port
+	ResendTimeout    = 1 * time.Second
+	MaxResends       = 3
 )
+
+// UnackedDeployInfo stores information about a deploy command awaiting acknowledgment.
+type UnackedDeployInfo struct {
+	Message    network.UDPMessage
+	SentAt     time.Time
+	RetryCount int
+}
 
 // Client holds the state for a game client
 type Client struct {
 	PlayerAccount *models.PlayerAccount
 	TCPConn       net.Conn
-	UDPConn       *net.UDPConn // For UDP communication
-	ServerUDPAddr *net.UDPAddr // To store the resolved server UDP address
-	ui            *TermboxUI   // Reference to the termbox UI
-	SessionToken  string       // Token for the current game session
-	IsPlayerOne   bool         // True if this client is Player 1 in the game
+	UDPConn       *net.UDPConn       // For UDP communication
+	ServerUDPAddr *net.UDPAddr       // To store the resolved server UDP address
+	ui            *TermboxUI         // Reference to the termbox UI
+	SessionToken  string             // Token for the current game session
+	IsPlayerOne   bool               // True if this client is Player 1 in the game
+	GameConfig    *models.GameConfig // Loaded game configuration
+
+	nextSequenceNumber           uint32                       // For outgoing UDP messages
+	unacknowledgedDeployCommands map[uint32]UnackedDeployInfo // Seq -> Info
+	mu                           sync.Mutex                   // To protect sequence number and unacked commands
 }
 
 // NewClient creates a new client instance
 func NewClient(ui *TermboxUI) *Client {
-	c := &Client{ui: ui}
+	c := &Client{
+		ui:                           ui,
+		nextSequenceNumber:           1, // Start sequence numbers from 1
+		unacknowledgedDeployCommands: make(map[uint32]UnackedDeployInfo),
+		GameConfig:                   nil, // Initialize GameConfig
+	}
 	if ui != nil {
 		ui.SetClient(c) // Pass client reference to UI
 	}
@@ -137,6 +157,7 @@ type MatchmakingInfo struct {
 	Opponent    models.PlayerAccount
 	UDPPort     int
 	IsPlayerOne bool
+	GameConfig  models.GameConfig
 }
 
 // RequestMatchmakingWithUI sends a matchmaking request and updates UI.
@@ -198,6 +219,7 @@ func (c *Client) RequestMatchmakingWithUI() (*network.MatchFoundResponse, error)
 	c.PlayerAccount.GameID = matchResponse.GameID
 	c.SessionToken = matchResponse.PlayerSessionToken // Store the session token
 	c.IsPlayerOne = matchResponse.IsPlayerOne         // Store if this client is player one
+	c.GameConfig = &matchResponse.GameConfig          // Store the game config
 
 	// Establish UDP connection
 	// TODO: Get server IP from config or a more robust mechanism
@@ -213,10 +235,63 @@ func (c *Client) RequestMatchmakingWithUI() (*network.MatchFoundResponse, error)
 	// Start listening for UDP messages in a new goroutine
 	go c.ListenForUDPMessages()
 
+	// Start the resend manager goroutine
+	go c.manageResends()
+
 	// Start listening for TCP messages for game end results
 	go c.listenForTCPEndGameMessages()
 
 	return &matchResponse, nil
+}
+
+// manageResends periodically checks for unacknowledged deploy commands and resends them.
+// This should be run in a goroutine.
+func (c *Client) manageResends() {
+	ticker := time.NewTicker(500 * time.Millisecond) // Check every 500ms
+	defer ticker.Stop()
+
+	for range ticker.C {
+		c.mu.Lock()
+		for seq, unackedInfo := range c.unacknowledgedDeployCommands {
+			if time.Since(unackedInfo.SentAt) > ResendTimeout {
+				if unackedInfo.RetryCount < MaxResends {
+					// Resend the message
+					msgBytes, err := json.Marshal(unackedInfo.Message) // Re-marshal, could store bytes if preferred
+					if err != nil {
+						// log.Printf("Error re-marshalling message for resend (Seq: %d): %v", seq, err)
+						continue // Skip this one for now
+					}
+					_, err = c.UDPConn.Write(msgBytes)
+					if err != nil {
+						// log.Printf("Error resending deploy command (Seq: %d): %v", seq, err)
+						// Don't remove or increment retry count if send fails, try again next tick
+						continue
+					}
+
+					unackedInfo.SentAt = time.Now()
+					unackedInfo.RetryCount++
+					c.unacknowledgedDeployCommands[seq] = unackedInfo // Update the map
+					// log.Printf("Client: Resent DeployTroop command Seq: %d (Attempt: %d)", seq, unackedInfo.RetryCount)
+				} else {
+					// Max resends reached, give up
+					// log.Printf("Client: Max resends reached for DeployTroop command Seq: %d. Giving up.", seq)
+					delete(c.unacknowledgedDeployCommands, seq)
+					// Optionally, inform the UI or player that the command failed permanently
+					if c.ui != nil {
+						c.ui.AddEventMessage(fmt.Sprintf("Failed to deploy troop (Seq: %d) after max retries.", seq))
+						c.ui.Render()
+					}
+				}
+			}
+		}
+		c.mu.Unlock()
+
+		// Check if client UDP connection is still alive or if we should stop this goroutine
+		if c.UDPConn == nil {
+			// log.Println("Client manageResends: UDP connection is nil, stopping resend manager.")
+			return
+		}
+	}
 }
 
 // listenForTCPEndGameMessages waits for game over results via TCP.
@@ -318,8 +393,8 @@ func (c *Client) EstablishUDPConnection(serverIP string, udpPort int) error {
 
 // SendDeployTroopCommand sends a request to the server to deploy a specific troop.
 func (c *Client) SendDeployTroopCommand(troopID string) error {
-	if c.UDPConn == nil || c.PlayerAccount == nil || c.PlayerAccount.GameID == "" {
-		return fmt.Errorf("cannot send deploy troop command: UDP not connected, not authenticated, or not in a game")
+	if c.UDPConn == nil || c.PlayerAccount == nil || c.PlayerAccount.GameID == "" || c.SessionToken == "" {
+		return fmt.Errorf("cannot send deploy troop command: client not in a valid game state")
 	}
 
 	// Construct the payload
@@ -327,13 +402,17 @@ func (c *Client) SendDeployTroopCommand(troopID string) error {
 		TroopID: troopID,
 	}
 
+	c.mu.Lock()
+	currentSeq := c.nextSequenceNumber
+	c.nextSequenceNumber++
+	c.mu.Unlock()
+
 	// Construct the main UDP message
-	// TODO: Implement proper sequence number generation. For now, using timestamp.
 	udpMsg := network.UDPMessage{
-		Seq:         uint32(time.Now().UnixNano()), // Placeholder for sequence number
+		Seq:         currentSeq,
 		Timestamp:   time.Now(),
 		SessionID:   c.PlayerAccount.GameID,
-		PlayerToken: c.SessionToken, // Use the stored session token
+		PlayerToken: c.SessionToken,
 		Type:        network.UDPMsgTypeDeployTroop,
 		Payload:     deployPayload,
 	}
@@ -349,10 +428,22 @@ func (c *Client) SendDeployTroopCommand(troopID string) error {
 	_, err = c.UDPConn.Write(msgBytes)
 	if err != nil {
 		// log.Printf("Error sending deploy troop command over UDP: %v", err)
+		// Note: If Write fails, we might not add to unacknowledgedDeployCommands
+		// or we add it and let the resend mechanism handle it if it was a temporary issue.
+		// For now, let's assume if Write fails, it's a more significant issue and don't track for resend.
 		return err
 	}
 
-	// log.Printf("Sent deploy troop command for TroopID: %s", troopID)
+	// Track for acknowledgment
+	c.mu.Lock()
+	c.unacknowledgedDeployCommands[currentSeq] = UnackedDeployInfo{
+		Message:    udpMsg,
+		SentAt:     time.Now(), // Record time after successful send
+		RetryCount: 0,
+	}
+	c.mu.Unlock()
+
+	// log.Printf("Sent deploy troop command for TroopID: %s, Seq: %d", troopID, currentSeq)
 	return nil
 }
 

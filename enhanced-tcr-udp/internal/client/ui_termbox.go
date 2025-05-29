@@ -4,6 +4,7 @@ import (
 	"enhanced-tcr-udp/internal/models"
 	"enhanced-tcr-udp/internal/network" // Added for network.GameOverResults
 	"fmt"
+	"strings" // Ensure strings is imported
 
 	// "log"
 
@@ -89,6 +90,28 @@ func (ui *TermboxUI) DisplayStaticText(x, y int, text string, fg, bg termbox.Att
 		termbox.SetCell(x+i, y, r, fg, bg)
 	}
 	termbox.Flush()
+}
+
+// makeBar creates a text-based progress bar string.
+func makeBar(current, max, barLength int, filledChar, emptyChar rune) string {
+	if max <= 0 { // Check for max <= 0 to prevent division by zero or negative bar length issues
+		// Return a full bar of emptyChar or specific indication based on preference
+		// For now, an empty bar if max is not positive
+		return fmt.Sprintf("[%s]", strings.Repeat(string(emptyChar), barLength))
+	}
+	filledCount := (current * barLength) / max
+	if filledCount < 0 {
+		filledCount = 0
+	}
+	if filledCount > barLength {
+		filledCount = barLength
+	}
+	emptyCount := barLength - filledCount
+	if emptyCount < 0 { // Should not happen if filledCount is capped
+		emptyCount = 0
+	}
+
+	return fmt.Sprintf("[%s%s]", strings.Repeat(string(filledChar), filledCount), strings.Repeat(string(emptyChar), emptyCount))
 }
 
 // UpdateGameInfo updates the game state information to be displayed.
@@ -202,11 +225,19 @@ func (ui *TermboxUI) displayGameScreen() {
 
 	// Game Info Area (Top)
 	infoLine1 := fmt.Sprintf("Time: %ds | My PlayerID: %s", ui.gameTimer, ui.client.PlayerAccount.Username)
-	infoLine2 := fmt.Sprintf("My Mana: %d | Opponent Mana: %d", ui.myMana, ui.opponentMana)
+
+	myManaBar := makeBar(ui.myMana, 10, 10, '|', '-') // Max mana is 10, bar length 10
+	opponentManaBar := makeBar(ui.opponentMana, 10, 10, '|', '-')
+	infoLine2 := fmt.Sprintf("My Mana: %s %d/10 | Opponent Mana: %s %d/10", myManaBar, ui.myMana, opponentManaBar, ui.opponentMana)
+
 	ui.DisplayStaticText(1, currentY, infoLine1, termbox.ColorWhite, termbox.ColorBlack)
 	currentY++
 	ui.DisplayStaticText(1, currentY, infoLine2, termbox.ColorWhite, termbox.ColorBlack)
 	currentY += 2 // Add some space
+
+	// Horizontal Separator
+	ui.DisplayStaticText(1, currentY, strings.Repeat("-", 50), termbox.ColorWhite, termbox.ColorBlack)
+	currentY++
 
 	// Display Towers
 	towerHeaderY := currentY
@@ -226,7 +257,9 @@ func (ui *TermboxUI) displayGameScreen() {
 			} else {
 				fgColor = termbox.ColorRed
 			}
-			towerInfo := fmt.Sprintf("%s %s (ID: %s): HP %d/%d", prefix, tower.SpecID, tower.GameSpecificID, tower.CurrentHP, tower.MaxHP)
+
+			hpBar := makeBar(tower.CurrentHP, tower.MaxHP, 15, '#', '.') // Bar length 15 for HP
+			towerInfo := fmt.Sprintf("%s %s (ID: %s): HP %s %d/%d", prefix, tower.SpecID, tower.GameSpecificID, hpBar, tower.CurrentHP, tower.MaxHP)
 			if tower.IsDestroyed {
 				towerInfo += " [DESTROYED]"
 				fgColor = termbox.ColorDarkGray // Or some other color to indicate destroyed
@@ -239,6 +272,10 @@ func (ui *TermboxUI) displayGameScreen() {
 		currentY++
 	}
 	currentY++ // Add some space
+
+	// Horizontal Separator
+	ui.DisplayStaticText(1, currentY, strings.Repeat("-", 50), termbox.ColorWhite, termbox.ColorBlack)
+	currentY++
 
 	// Display Active Troops
 	troopHeaderY := currentY
@@ -253,12 +290,14 @@ func (ui *TermboxUI) displayGameScreen() {
 			fgColor := termbox.ColorWhite
 			prefix := "Opponent's"
 			if troop.OwnerID == myPlayerID {
-				fgColor = termbox.ColorCyan
+				fgColor = termbox.ColorCyan // Friendly troops in Cyan
 				prefix = "My"
 			} else {
-				fgColor = termbox.ColorMagenta
+				fgColor = termbox.ColorMagenta // Enemy troops in Magenta
 			}
-			troopInfo := fmt.Sprintf("%s %s (ID: %s): HP %d/%d, ATK %d", prefix, troop.SpecID, id, troop.CurrentHP, troop.MaxHP, troop.CurrentATK)
+
+			hpBar := makeBar(troop.CurrentHP, troop.MaxHP, 10, '#', '.') // Bar length 10 for troop HP
+			troopInfo := fmt.Sprintf("%s %s (ID: %s): HP %s %d/%d, ATK %d", prefix, troop.SpecID, id, hpBar, troop.CurrentHP, troop.MaxHP, troop.CurrentATK)
 			if troop.CurrentHP <= 0 {
 				troopInfo += " [DEFEATED]"
 				fgColor = termbox.ColorDarkGray // Or some other color
@@ -271,6 +310,10 @@ func (ui *TermboxUI) displayGameScreen() {
 		currentY++
 	}
 	currentY++ // Add some space
+
+	// Horizontal Separator
+	ui.DisplayStaticText(1, currentY, strings.Repeat("-", 50), termbox.ColorWhite, termbox.ColorBlack)
+	currentY++
 
 	// Event Log Area
 	eventLogHeaderY := currentY
@@ -288,11 +331,26 @@ func (ui *TermboxUI) displayGameScreen() {
 		// currentY++ // Don't increment if no messages, let logStartY define the block
 	}
 	// Ensure currentY is set correctly for prompts below, accounting for the full height of the log area.
-	currentY = logStartY + maxEventLogMessages + 1 // +1 for spacing after the designated log area height
+	currentY = logStartY + maxEventLogMessages // Position right after log messages
+
+	// Horizontal Separator
+	ui.DisplayStaticText(1, currentY, strings.Repeat("-", 50), termbox.ColorWhite, termbox.ColorBlack)
+	currentY++
 
 	// Input Area (Bottom)
 	troopSelectionPromptY := currentY
-	troopSelectionPrompt := "Deploy: [1]Pawn(?) [2]Bishop(?) [3]Rook(?) [4]Knight(?) [5]Prince(?) [6]Queen(?). ESC to Deselect."
+	var troopSelectionPrompt string
+	if ui.client != nil && ui.client.GameConfig != nil && len(ui.client.GameConfig.Troops) > 0 {
+		pawnCost := ui.client.GameConfig.Troops["pawn"].ManaCost
+		bishopCost := ui.client.GameConfig.Troops["bishop"].ManaCost
+		rookCost := ui.client.GameConfig.Troops["rook"].ManaCost
+		knightCost := ui.client.GameConfig.Troops["knight"].ManaCost
+		princeCost := ui.client.GameConfig.Troops["prince"].ManaCost
+		queenCost := ui.client.GameConfig.Troops["queen"].ManaCost
+		troopSelectionPrompt = fmt.Sprintf("Deploy: [1]Pawn(%d) [2]Bishop(%d) [3]Rook(%d) [4]Knight(%d) [5]Prince(%d) [6]Queen(%d). ESC to Deselect.", pawnCost, bishopCost, rookCost, knightCost, princeCost, queenCost)
+	} else {
+		troopSelectionPrompt = "Deploy: [1]Pawn(?) [2]Bishop(?) [3]Rook(?) [4]Knight(?) [5]Prince(?) [6]Queen(?). ESC to Deselect. (Costs N/A)"
+	}
 	ui.DisplayStaticText(1, troopSelectionPromptY, troopSelectionPrompt, termbox.ColorCyan, termbox.ColorBlack)
 	selectedMsgY := troopSelectionPromptY + 1
 	selectedMsg := "Selected: None"

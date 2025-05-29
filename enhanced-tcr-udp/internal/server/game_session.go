@@ -44,6 +44,8 @@ type GameSession struct {
 	gameResult      string                         // e.g., "win", "loss", "draw"
 	isGameOver      bool                           // Flag to indicate if the game has concluded
 	resultsChan     chan<- network.GameResultInfo  // Channel to send game results back
+
+	processedDeployCommands map[string]map[uint32]time.Time // PlayerToken -> Seq -> ProcessTime
 }
 
 // NewGameSession creates a new game session.
@@ -66,25 +68,30 @@ func NewGameSession(id string, p1Acc, p2Acc *models.PlayerAccount, p1Token, p2To
 
 	startTime := time.Now()
 	gs := &GameSession{
-		ID:                    id,
-		Player1:               &models.PlayerInGame{Account: *p1Acc, SessionToken: p1Token, CurrentMana: 5, DeployedTroops: make(map[string]*models.ActiveTroop), Towers: make([]*models.TowerInstance, 0)},
-		Player2:               &models.PlayerInGame{Account: *p2Acc, SessionToken: p2Token, CurrentMana: 5, DeployedTroops: make(map[string]*models.ActiveTroop), Towers: make([]*models.TowerInstance, 0)},
-		Config:                gameCfg,
-		udpPort:               udpPort,
-		startTime:             startTime,
-		gameEndTime:           startTime.Add(3 * time.Minute),
-		playerActions:         make(chan network.UDPMessage, 10),
-		playerClientAddresses: make(map[string]*net.UDPAddr),
-		lastManaRegen:         startTime,
-		lastTroopAttack:       make(map[string]time.Time),
-		lastTowerAttack:       make(map[string]time.Time),
-		activeTroops:          make(map[string]*models.ActiveTroop), // Initialize centralized map
-		towers:                make([]*models.TowerInstance, 0),     // Initialize centralized list
-		gameWinner:            nil,
-		gameResult:            "",
-		isGameOver:            false,
-		resultsChan:           resultsChan,
+		ID:                      id,
+		Player1:                 &models.PlayerInGame{Account: *p1Acc, SessionToken: p1Token, CurrentMana: 5, DeployedTroops: make(map[string]*models.ActiveTroop), Towers: make([]*models.TowerInstance, 0)},
+		Player2:                 &models.PlayerInGame{Account: *p2Acc, SessionToken: p2Token, CurrentMana: 5, DeployedTroops: make(map[string]*models.ActiveTroop), Towers: make([]*models.TowerInstance, 0)},
+		Config:                  gameCfg,
+		udpPort:                 udpPort,
+		startTime:               startTime,
+		gameEndTime:             startTime.Add(3 * time.Minute),
+		playerActions:           make(chan network.UDPMessage, 10),
+		playerClientAddresses:   make(map[string]*net.UDPAddr),
+		lastManaRegen:           startTime,
+		lastTroopAttack:         make(map[string]time.Time),
+		lastTowerAttack:         make(map[string]time.Time),
+		activeTroops:            make(map[string]*models.ActiveTroop), // Initialize centralized map
+		towers:                  make([]*models.TowerInstance, 0),     // Initialize centralized list
+		gameWinner:              nil,
+		gameResult:              "",
+		isGameOver:              false,
+		resultsChan:             resultsChan,
+		processedDeployCommands: make(map[string]map[uint32]time.Time),
 	}
+
+	// Initialize processedDeployCommands for each player
+	gs.processedDeployCommands[p1Token] = make(map[uint32]time.Time)
+	gs.processedDeployCommands[p2Token] = make(map[uint32]time.Time)
 
 	// Initialize towers for Player 1
 	initializePlayerTowers(gs.Player1, gs.Config.Towers, "player1", gs.Player1.Account.Level) // Pass player level
@@ -358,6 +365,27 @@ func (gs *GameSession) handlePlayerAction(msg network.UDPMessage) {
 		}
 
 	case network.UDPMsgTypeDeployTroop:
+		// Check if this command sequence from this player has already been processed.
+		if _, processed := gs.processedDeployCommands[msg.PlayerToken][msg.Seq]; processed {
+			log.Printf("[GameSession %s] Player %s: Duplicate DeployTroop command (Seq: %d) received. Ignoring and resending ACK.", gs.ID, msg.PlayerToken, msg.Seq)
+			// Resend ACK just in case the first one was lost
+			ackPayload := network.CommandAckUDP{AckSeq: msg.Seq}
+			clientAddr, addrOk := gs.playerClientAddresses[msg.PlayerToken]
+			if addrOk && clientAddr != nil {
+				gs.sendUDPMessageToAddress(network.UDPMessage{
+					Type:        network.UDPMsgTypeCommandAck,
+					SessionID:   gs.ID,           // Important for client to validate
+					PlayerToken: msg.PlayerToken, // Echo back player token
+					Seq:         0,               // ACKs themselves don't need sequence numbers for this simple ACK system
+					Timestamp:   time.Now(),
+					Payload:     ackPayload,
+				}, clientAddr)
+			} else {
+				log.Printf("[GameSession %s] Player %s: Could not resend ACK for Seq %d, client address unknown.", gs.ID, msg.PlayerToken, msg.Seq)
+			}
+			return
+		}
+
 		var deployPayload network.DeployTroopCommandUDP
 		payloadMap, ok := msg.Payload.(map[string]interface{})
 		if !ok {
@@ -449,6 +477,24 @@ func (gs *GameSession) handlePlayerAction(msg network.UDPMessage) {
 					eventDetails["new_hp"] = healedTower.CurrentHP
 				}
 				gs.sendGameEventToAllPlayers(network.GameEventQueenHeal, eventDetails)
+
+				// Record processed command and send ACK for Queen deployment
+				gs.processedDeployCommands[msg.PlayerToken][msg.Seq] = time.Now()
+				ackPayload := network.CommandAckUDP{AckSeq: msg.Seq}
+				clientAddr, addrOk := gs.playerClientAddresses[msg.PlayerToken]
+				if addrOk && clientAddr != nil {
+					gs.sendUDPMessageToAddress(network.UDPMessage{
+						Type:        network.UDPMsgTypeCommandAck,
+						SessionID:   gs.ID,
+						PlayerToken: msg.PlayerToken,
+						Seq:         0, // ACK specific seq
+						Timestamp:   time.Now(),
+						Payload:     ackPayload,
+					}, clientAddr)
+					log.Printf("[GameSession %s] Player %s: Sent ACK for Queen Deploy (Seq: %d)", gs.ID, msg.PlayerToken, msg.Seq)
+				} else {
+					log.Printf("[GameSession %s] Player %s: Could not send ACK for Queen Deploy (Seq: %d), client address unknown.", gs.ID, msg.PlayerToken, msg.Seq)
+				}
 			}
 			// Queen does not persist on board, so we don't add to ActiveTroops
 		} else {
@@ -488,6 +534,24 @@ func (gs *GameSession) handlePlayerAction(msg network.UDPMessage) {
 				"max_hp":      activeTroop.MaxHP,
 				"current_atk": activeTroop.CurrentATK,
 			})
+
+			// Record processed command and send ACK for normal troop deployment
+			gs.processedDeployCommands[msg.PlayerToken][msg.Seq] = time.Now()
+			ackPayload := network.CommandAckUDP{AckSeq: msg.Seq}
+			clientAddr, addrOk := gs.playerClientAddresses[msg.PlayerToken]
+			if addrOk && clientAddr != nil {
+				gs.sendUDPMessageToAddress(network.UDPMessage{
+					Type:        network.UDPMsgTypeCommandAck,
+					SessionID:   gs.ID,
+					PlayerToken: msg.PlayerToken,
+					Seq:         0, // ACK specific seq
+					Timestamp:   time.Now(),
+					Payload:     ackPayload,
+				}, clientAddr)
+				log.Printf("[GameSession %s] Player %s: Sent ACK for Troop Deploy %s (Seq: %d)", gs.ID, msg.PlayerToken, troopSpec.Name, msg.Seq)
+			} else {
+				log.Printf("[GameSession %s] Player %s: Could not send ACK for Troop Deploy %s (Seq: %d), client address unknown.", gs.ID, msg.PlayerToken, troopSpec.Name, msg.Seq)
+			}
 		}
 		// After handling deployment, immediately send a game state update to reflect mana change and new troop/heal.
 		// This can be done by falling through, or explicitly calling a send state function if extracted.

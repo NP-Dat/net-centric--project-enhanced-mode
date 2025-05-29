@@ -40,6 +40,11 @@ func (c *Client) ListenForUDPMessages() {
 				return // Exit goroutine
 			}
 			// log.Printf("Error reading from UDP: %v. Listener might stop.", err)
+			if c.ui != nil {
+				c.ui.AddEventMessage(fmt.Sprintf("UDP Listen Error: %v. Game may be unresponsive.", err))
+				c.ui.Render() // Try to show the error
+				// Consider setting a specific error view or flag in ui
+			}
 			return // Or handle error more gracefully, e.g. attempt to re-establish for some errors
 		}
 
@@ -56,6 +61,26 @@ func (c *Client) ListenForUDPMessages() {
 		switch udpMsg.Type {
 		case network.UDPMsgTypeGameStateUpdate:
 			c.handleGameStateUpdate(udpMsg.Payload)
+		case network.UDPMsgTypeCommandAck:
+			var ackPayload network.CommandAckUDP
+			payloadBytes, err := json.Marshal(udpMsg.Payload)
+			if err != nil {
+				// log.Printf("Error marshalling CommandAckUDP payload: %v", err)
+				continue
+			}
+			if err := json.Unmarshal(payloadBytes, &ackPayload); err != nil {
+				// log.Printf("Error unmarshalling CommandAckUDP: %v. Raw: %s", err, string(payloadBytes))
+				continue
+			}
+
+			c.mu.Lock()
+			if _, exists := c.unacknowledgedDeployCommands[ackPayload.AckSeq]; exists {
+				delete(c.unacknowledgedDeployCommands, ackPayload.AckSeq)
+				// log.Printf("Client: Received ACK for DeployTroop command Seq: %d", ackPayload.AckSeq)
+			} else {
+				// log.Printf("Client: Received ACK for unknown or already acked Seq: %d", ackPayload.AckSeq)
+			}
+			c.mu.Unlock()
 		case network.UDPMsgTypeGameEvent:
 			var gameEventPayload network.GameEventUDP
 			payloadMap, ok := udpMsg.Payload.(map[string]interface{})

@@ -56,6 +56,7 @@ type MatchFoundResponse struct {
 	UDPPort            int                  `json:"udp_port"`             // UDP port for this game session
 	IsPlayerOne        bool                 `json:"is_player_one"`        // To help client identify its role initially
 	PlayerSessionToken string               `json:"player_session_token"` // Token for this player in this session
+	GameConfig         models.GameConfig    `json:"game_config"`          // Full game config (troops, towers)
 	// May include initial turn info or other specific game start details
 }
 
