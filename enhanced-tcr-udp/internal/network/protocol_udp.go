@@ -23,6 +23,16 @@ const (
 	UDPMsgTypeGameEvent       = "game_event_udp"
 	UDPMsgTypePlayerQuit      = "player_quit_udp" // New: Client signals quit
 	// Add other UDP message types here
+
+	// Game Event Types (for GameEventUDP.EventType and server-side gs.sendGameEventToAllPlayers)
+	GameEventTowerDamaged   = "event_tower_damaged"
+	GameEventTroopDamaged   = "event_troop_damaged"
+	GameEventTowerDestroyed = "event_tower_destroyed"
+	GameEventTroopDefeated  = "event_troop_defeated"
+	GameEventCritHit        = "event_crit_hit"
+	GameEventQueenHeal      = "event_queen_heal"
+	GameEventTroopDeployed  = "event_troop_deployed"
+	GameEventError          = "event_error" // For sending errors to a specific player
 )
 
 // --- Client to Server (C2S) UDP Messages ---

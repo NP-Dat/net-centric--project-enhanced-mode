@@ -1,22 +1,20 @@
 {
-  "towers": {
-    "king_tower": {
-      "id": "king_tower",
-      "name": "King Tower",
-      "baseHP": 2000,
-      "baseATK": 500,
-      "baseDEF": 300,
-      "critChance": 10.0,
-      "expYield": 200
-    },
-    "guard_tower": {
-      "id": "guard_tower",
-      "name": "Guard Tower",
-      "baseHP": 1000,
-      "baseATK": 300,
-      "baseDEF": 100,
-      "critChance": 5.0,
-      "expYield": 100
-    }
+  "king_tower": {
+    "id": "king_tower",
+    "name": "King Tower",
+    "base_hp": 2000,
+    "base_atk": 500,
+    "base_def": 300,
+    "crit_chance": 0.10,
+    "exp_yield": 200
+  },
+  "guard_tower": {
+    "id": "guard_tower",
+    "name": "Guard Tower",
+    "base_hp": 1000,
+    "base_atk": 300,
+    "base_def": 100,
+    "crit_chance": 0.05,
+    "exp_yield": 100
   }
 }

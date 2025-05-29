@@ -1,0 +1,7 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+- **External Library Check:** Determine if the function/code snippet originates from an external library. If it does, identify the library and provide a concise explanation of its main purpose.
+- **Code Explanation:** Describe how the code works, focusing on its syntax and logic.

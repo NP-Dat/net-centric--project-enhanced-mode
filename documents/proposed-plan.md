@@ -186,13 +186,13 @@ enhanced-tcr-udp/
     *   [x] Client (`ui_termbox.go`): Display player's current mana, list of available troops (with mana costs), and visually represent deployed troops on the board.
 
 *   **Sprint 4: Continuous Combat & Targeting (UDP)**
-    *   [ ] Server (`game/logic_enhanced.go`, `game/combat.go`):
+    *   [x] Server (`game/logic_enhanced.go`, `game/combat.go`):
         *   Implement continuous troop attacks (1/sec) against towers (lowest HP valid target, GT1 rule).
         *   Implement continuous tower attacks (1/sec) against troops (last/oldest attacker).
         *   Implement damage calculation and CRIT chance (for towers).
         *   Implement Queen's heal ability.
-    *   [ ] Server: Update HP values in `game_state_update_udp` frequently. Send `game_event_udp` for significant combat events (tower destroyed, critical hit).
-    *   [ ] Client (`ui_termbox.go`): Update HP displays for towers and troops dynamically. Display game events from server.
+    *   [x] Server: Update HP values in `game_state_update_udp` frequently. Send `game_event_udp` for significant combat events (tower destroyed, critical hit).
+    *   [x] Client (`ui_termbox.go`): Update HP displays for towers and troops dynamically. Display game events from server.
 
 *   **Sprint 5: Win Conditions, EXP/Leveling & Results (TCP for final)**
     *   [ ] Server: Implement win condition checks (King Tower destruction, timeout tower count).
