@@ -2,6 +2,7 @@ package server
 
 import (
 	"enhanced-tcr-udp/internal/models"
+	"enhanced-tcr-udp/internal/network"
 	"log"
 	"sync"
 )
@@ -23,7 +24,7 @@ func NewGameSessionManager() *GameSessionManager {
 }
 
 // CreateSession creates a new game session for two players.
-func (gsm *GameSessionManager) CreateSession(gameID string, player1, player2 *models.PlayerAccount, udpPort int) *GameSession {
+func (gsm *GameSessionManager) CreateSession(gameID string, player1, player2 *models.PlayerAccount, udpPort int, resultsChan chan<- network.GameResultInfo) *GameSession {
 	gsm.mu.Lock()
 	defer gsm.mu.Unlock()
 
@@ -38,7 +39,7 @@ func (gsm *GameSessionManager) CreateSession(gameID string, player1, player2 *mo
 	// In a more robust system, these tokens might be generated uniquely.
 	p1Token := player1.Username
 	p2Token := player2.Username
-	session := NewGameSession(gameID, player1, player2, p1Token, p2Token, udpPort)
+	session := NewGameSession(gameID, player1, player2, p1Token, p2Token, udpPort, resultsChan)
 	if session == nil { // NewGameSession can return nil if config loading fails
 		log.Printf("Failed to create new game session %s due to initialization error.", gameID)
 		return nil

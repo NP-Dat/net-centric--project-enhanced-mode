@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -213,7 +214,74 @@ func (c *Client) RequestMatchmakingWithUI() (*network.MatchFoundResponse, error)
 	// Start listening for UDP messages in a new goroutine
 	go c.ListenForUDPMessages()
 
+	// Start listening for TCP messages for game end results
+	go c.listenForTCPEndGameMessages()
+
 	return &matchResponse, nil
+}
+
+// listenForTCPEndGameMessages waits for game over results via TCP.
+// It should be run in a goroutine after a match is found.
+func (c *Client) listenForTCPEndGameMessages() {
+	if c.TCPConn == nil {
+		log.Println("TCP connection is not established. Cannot listen for end game messages.")
+		return
+	}
+	log.Println("Starting to listen for TCP end game messages from server...")
+
+	decoder := json.NewDecoder(c.TCPConn)
+	for {
+		var msg network.TCPMessage
+		if err := decoder.Decode(&msg); err != nil {
+			// Check if the error is due to the connection being closed or EOF
+			if err == io.EOF || strings.Contains(err.Error(), "use of closed network connection") || strings.Contains(err.Error(), "reset by peer") {
+				log.Println("TCP connection closed by server, EOF, or reset. Stopping TCP listener for game results.")
+				// Optionally inform the UI that the connection for results was lost
+				if c.ui != nil {
+					// c.ui.DisplayError("Connection lost while waiting for game results.")
+				}
+				return // Exit goroutine
+			}
+			log.Printf("Error decoding TCP message: %v. TCP listener for game results might stop.", err)
+			return // Or handle error more gracefully
+		}
+
+		log.Printf("Client: Received TCP Message: Type=%s", msg.Type)
+
+		switch msg.Type {
+		case network.MsgTypeGameOverResults:
+			payloadBytes, err := json.Marshal(msg.Payload) // Payload is interface{}, remarshal to parse into specific struct
+			if err != nil {
+				log.Printf("Client: Error marshaling GameOverResults payload: %v", err)
+				continue
+			}
+			var results network.GameOverResults
+			if err := json.Unmarshal(payloadBytes, &results); err != nil {
+				log.Printf("Client: Error unmarshalling GameOverResults: %v. Raw: %s", err, string(payloadBytes))
+				continue
+			}
+
+			log.Printf("Client: Game Over! Outcome: %s, EXP Change: %d, New EXP: %d, New Level: %d, Leveled Up: %t",
+				results.Outcome, results.EXPChange, results.NewEXP, results.NewLevel, results.LevelUp)
+
+			// Update client's own account details (EXP, Level)
+			if c.PlayerAccount != nil {
+				c.PlayerAccount.EXP = results.NewEXP
+				c.PlayerAccount.Level = results.NewLevel
+			}
+
+			if c.ui != nil {
+				c.ui.SetCurrentView(ViewGameOver) // Switch UI to game over view
+				c.ui.SetGameOverDetails(results)  // Pass results to UI to store
+				c.ui.Render()                     // Ensure UI is updated (Render will call DisplayGameOver)
+			}
+			// After processing game over, this goroutine can terminate as its job is done for this game.
+			log.Println("Client: Processed GameOverResults. TCP listener for game results is stopping.")
+			return
+		default:
+			log.Printf("Client: Received unhandled TCP message type during game: %s", msg.Type)
+		}
+	}
 }
 
 // EstablishUDPConnection resolves the server's UDP address and prepares the UDPConn.

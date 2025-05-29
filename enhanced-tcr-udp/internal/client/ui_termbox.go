@@ -2,6 +2,7 @@ package client
 
 import (
 	"enhanced-tcr-udp/internal/models"
+	"enhanced-tcr-udp/internal/network" // Added for network.GameOverResults
 	"fmt"
 	"log"
 
@@ -12,19 +13,32 @@ const (
 	maxEventLogMessages = 5 // Number of recent event messages to display
 )
 
+// UIView defines the different states or screens the UI can be in.
+type UIView int
+
+const (
+	// ViewLogin might not be explicitly managed by currentView if GetTextInput is blocking
+	// and directly handles its drawing until completion.
+	ViewLogin UIView = iota
+	ViewMatchmaking
+	ViewGame
+	ViewGameOver
+)
+
 // TermboxUI holds state for the termbox interface
 type TermboxUI struct {
-	gameTimer    int
-	myMana       int                           // Renamed from player1Mana for clarity from client's perspective
-	opponentMana int                           // Renamed from player2Mana
-	towers       []models.TowerInstance        // All towers in the game state
-	activeTroops map[string]models.ActiveTroop // All active troops
-
-	eventLog []string // To store recent event messages
-
+	gameTimer         int
+	myMana            int                           // Renamed from player1Mana for clarity from client's perspective
+	opponentMana      int                           // Renamed from player2Mana
+	towers            []models.TowerInstance        // All towers in the game state
+	activeTroops      map[string]models.ActiveTroop // All active troops
+	eventLog          []string                      // To store recent event messages
 	inputLine         string
 	lastSelectedTroop rune
 	client            *Client
+
+	currentView     UIView                  // Current UI state (e.g., game, game over)
+	gameOverDetails network.GameOverResults // Stores details for the game over screen
 	// TODO: Store TroopSpec (from GameConfig) to display mana costs dynamically
 }
 
@@ -34,7 +48,27 @@ func NewTermboxUI() *TermboxUI {
 		activeTroops: make(map[string]models.ActiveTroop),
 		towers:       make([]models.TowerInstance, 0),
 		eventLog:     make([]string, 0, maxEventLogMessages),
+		currentView:  ViewGame, // Default to game view, might be set to login/matchmaking by main flow
 	}
+}
+
+// SetClient associates the client logic with the UI.
+func (ui *TermboxUI) SetClient(c *Client) {
+	ui.client = c
+}
+
+// SetCurrentView changes the current UI view (e.g., game, game_over).
+func (ui *TermboxUI) SetCurrentView(view UIView) {
+	log.Printf("UI View changing from %v to %v", ui.currentView, view)
+	ui.currentView = view
+	ui.ClearScreen() // Clear screen when view changes
+	// ui.Render() // Render immediately after view change - let the main loop control render calls.
+}
+
+// SetGameOverDetails stores the results to be displayed on the game over screen.
+func (ui *TermboxUI) SetGameOverDetails(results network.GameOverResults) {
+	ui.gameOverDetails = results
+	log.Printf("Game over details set in UI: Outcome %s, EXP %d", results.Outcome, results.EXPChange)
 }
 
 // Init initializes the termbox screen.
@@ -77,9 +111,91 @@ func (ui *TermboxUI) AddEventMessage(message string) {
 	// For critical events, a direct call to ui.Render() might be added here or after the call to AddEventMessage.
 }
 
+// displayGameOverScreen renders the game over information.
+func (ui *TermboxUI) displayGameOverScreen() {
+	// termbox.Clear(termbox.ColorDefault, termbox.ColorDefault) // Clear is handled by Render now
+	w, h := termbox.Size()
+	y := 1
+
+	title := "--- GAME OVER ---"
+	ui.DisplayStaticText((w-len(title))/2, y, title, termbox.ColorYellow, termbox.ColorDefault)
+	y += 2
+
+	outcomeMsg := fmt.Sprintf("Outcome: %s", ui.gameOverDetails.Outcome)
+	outcomeColor := termbox.ColorWhite
+	if ui.gameOverDetails.Outcome == "Win" {
+		outcomeColor = termbox.ColorGreen
+	} else if ui.gameOverDetails.Outcome == "Loss" {
+		outcomeColor = termbox.ColorRed
+	} else if ui.gameOverDetails.Outcome == "Draw" {
+		outcomeColor = termbox.ColorYellow
+	}
+	ui.DisplayStaticText(1, y, outcomeMsg, outcomeColor, termbox.ColorDefault)
+	y++
+
+	expMsg := fmt.Sprintf("EXP Earned this game: %+d", ui.gameOverDetails.EXPChange)
+	ui.DisplayStaticText(1, y, expMsg, termbox.ColorWhite, termbox.ColorDefault)
+	y++
+
+	totalExpMsg := fmt.Sprintf("Your Total EXP: %d", ui.gameOverDetails.NewEXP)
+	ui.DisplayStaticText(1, y, totalExpMsg, termbox.ColorWhite, termbox.ColorDefault)
+	y++
+
+	levelMsg := fmt.Sprintf("Your Level: %d", ui.gameOverDetails.NewLevel)
+	if ui.gameOverDetails.LevelUp {
+		levelMsg += " (LEVEL UP!)"
+		ui.DisplayStaticText(1, y, levelMsg, termbox.ColorMagenta, termbox.ColorDefault)
+	} else {
+		ui.DisplayStaticText(1, y, levelMsg, termbox.ColorWhite, termbox.ColorDefault)
+	}
+	y += 2
+
+	// Display who destroyed what, if relevant
+	// The current structure of DestroyedTowers in GameOverResults is: map[opponent_username]count_destroyed_by_me
+	// We can iterate through this if it's populated.
+	if len(ui.gameOverDetails.DestroyedTowers) > 0 {
+		for opponent, count := range ui.gameOverDetails.DestroyedTowers {
+			destroyedMsg := fmt.Sprintf("You destroyed %d of %s's towers.", count, opponent)
+			ui.DisplayStaticText(1, y, destroyedMsg, termbox.ColorCyan, termbox.ColorDefault)
+			y++
+		}
+	}
+	y++
+
+	// Instructions to continue
+	if y < h-1 {
+		instructions := "Press any key to continue..."
+		ui.DisplayStaticText(1, y, instructions, termbox.ColorYellow, termbox.ColorDefault)
+	} else {
+		instructions := "Press any key..."
+		ui.DisplayStaticText(1, h-1, instructions, termbox.ColorYellow, termbox.ColorDefault)
+	}
+
+	// termbox.Flush() // Flush is handled by Render
+}
+
 // Render draws the entire game UI based on current state.
 func (ui *TermboxUI) Render() {
 	termbox.Clear(termbox.ColorDefault, termbox.ColorDefault)
+
+	switch ui.currentView {
+	case ViewGame:
+		ui.displayGameScreen()
+	case ViewGameOver:
+		ui.displayGameOverScreen()
+	case ViewLogin: // Login screen is handled by GetTextInput calls, may not need explicit render state here.
+		ui.DisplayStaticText(1, 1, "Login View (typically handled by input prompts)", termbox.ColorWhite, termbox.ColorDefault)
+	case ViewMatchmaking: // Matchmaking screen similarly might be simple text updates.
+		ui.DisplayStaticText(1, 1, "Matchmaking View (waiting for match...)", termbox.ColorWhite, termbox.ColorDefault)
+	default:
+		ui.DisplayStaticText(1, 1, fmt.Sprintf("Error: Unknown UI View (%d)", ui.currentView), termbox.ColorRed, termbox.ColorDefault)
+	}
+	termbox.Flush()
+}
+
+// displayGameScreen renders the main game interface.
+func (ui *TermboxUI) displayGameScreen() {
+	// termbox.Clear(termbox.ColorDefault, termbox.ColorDefault) // Moved to Render()
 
 	currentY := 1 // Start rendering from Y=1
 
@@ -184,7 +300,7 @@ func (ui *TermboxUI) Render() {
 	}
 	ui.DisplayStaticText(1, selectedMsgY, selectedMsg, termbox.ColorWhite, termbox.ColorBlack)
 
-	termbox.Flush()
+	// termbox.Flush() // Moved to Render()
 }
 
 // ClearScreen clears the termbox screen.
@@ -341,11 +457,6 @@ func (ui *TermboxUI) GetTextInput(prompt string, x, y int, fg, bg termbox.Attrib
 		}
 		termbox.Flush()
 	}
-}
-
-// SetClient allows the main client logic to pass a reference to itself to the UI.
-func (ui *TermboxUI) SetClient(c *Client) {
-	ui.client = c
 }
 
 // Termbox rendering and input handling

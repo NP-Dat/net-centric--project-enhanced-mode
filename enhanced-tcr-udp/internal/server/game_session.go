@@ -40,10 +40,14 @@ type GameSession struct {
 	lastTowerAttack map[string]time.Time           // Key: Tower GameSpecificID
 	activeTroops    map[string]*models.ActiveTroop // Centralized map for all active troops
 	towers          []*models.TowerInstance        // Centralized list of all towers
+	gameWinner      *models.PlayerInGame           // Stores the winner of the game
+	gameResult      string                         // e.g., "win", "loss", "draw"
+	isGameOver      bool                           // Flag to indicate if the game has concluded
+	resultsChan     chan<- network.GameResultInfo  // Channel to send game results back
 }
 
 // NewGameSession creates a new game session.
-func NewGameSession(id string, p1Acc, p2Acc *models.PlayerAccount, p1Token, p2Token string, udpPort int) *GameSession {
+func NewGameSession(id string, p1Acc, p2Acc *models.PlayerAccount, p1Token, p2Token string, udpPort int, resultsChan chan<- network.GameResultInfo) *GameSession {
 	towerConf, err := persistence.LoadTowerConfig()
 	if err != nil {
 		log.Printf("[GameSession %s] Error loading tower config: %v. Aborting session.", id, err)
@@ -76,6 +80,10 @@ func NewGameSession(id string, p1Acc, p2Acc *models.PlayerAccount, p1Token, p2To
 		lastTowerAttack:       make(map[string]time.Time),
 		activeTroops:          make(map[string]*models.ActiveTroop), // Initialize centralized map
 		towers:                make([]*models.TowerInstance, 0),     // Initialize centralized list
+		gameWinner:            nil,
+		gameResult:            "",
+		isGameOver:            false,
+		resultsChan:           resultsChan,
 	}
 
 	// Initialize towers for Player 1
@@ -148,18 +156,23 @@ func initializePlayerTowers(player *models.PlayerInGame, towerSpecs map[string]m
 func (gs *GameSession) Start() {
 	log.Printf("Game session %s started. Game will end at %v. Player1: %s (Token: %s), Player2: %s (Token: %s)", gs.ID, gs.gameEndTime, gs.Player1.Account.Username, gs.Player1.SessionToken, gs.Player2.Account.Username, gs.Player2.SessionToken)
 
-	ticker := time.NewTicker(1 * time.Second) // Tick every second
+	ticker := time.NewTicker(500 * time.Millisecond) // Tick more frequently for responsiveness
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
 			gs.mu.Lock()
-			if time.Now().After(gs.gameEndTime) {
-				log.Printf("Game session %s timer ended.", gs.ID)
-				// TODO: Determine winner based on rules (King Tower or most towers destroyed)
+			if gs.isGameOver {
 				gs.mu.Unlock()
-				gs.Stop()
+				// gs.Stop() // Stop is handled by determineWinnerAndStop
+				return
+			}
+
+			if time.Now().After(gs.gameEndTime) {
+				log.Printf("[GameSession %s] Timer ended.", gs.ID)
+				gs.determineWinnerAndStop("timeout")
+				gs.mu.Unlock()
 				return
 			}
 
@@ -198,7 +211,13 @@ func (gs *GameSession) Start() {
 								gs.sendGameEventToAllPlayers(network.GameEventTowerDestroyed, map[string]interface{}{
 									"tower_id": targetTower.GameSpecificID, "tower_spec": targetTower.SpecID, "owner_id": targetTower.OwnerID, "destroyed_by_troop_id": troop.InstanceID,
 								})
-								// TODO: Check for King Tower destruction for instant win
+								// Check for King Tower destruction for instant win
+								if gs.isKingTower(targetTower) {
+									log.Printf("[GameSession %s] King Tower %s DESTROYED! Determining winner.", gs.ID, targetTower.GameSpecificID)
+									gs.determineWinnerAndStop("king_tower_destroyed")
+									gs.mu.Unlock() // ensure unlock before return
+									return
+								}
 							}
 						}
 					}
@@ -296,18 +315,22 @@ func (gs *GameSession) Start() {
 				}
 			}
 
+			gs.sendGameStateToAllPlayers()
 			gs.mu.Unlock()
+
 		case action := <-gs.playerActions:
 			gs.mu.Lock()
-			gs.handlePlayerAction(action)
-			// Check if game should end due to quits after handling action
-			if gs.player1Quit && gs.player2Quit {
-				log.Printf("Both players have quit game session %s. Stopping.", gs.ID)
-				gs.mu.Unlock()
-				gs.Stop()
-				return
+			if !gs.isGameOver { // Process actions only if game is not over
+				gs.handlePlayerAction(action)
 			}
+			// After handling action, check if game ended due to it (e.g., Queen heal on a King Tower might be a win if it was the last action)
+			// This might be redundant if handlePlayerAction itself can trigger a game end check.
+			// However, for now, we rely on the main loop's tower destruction checks.
 			gs.mu.Unlock()
+
+		case <-time.After(5 * time.Second): // Timeout for player actions if channel is empty
+			// This case helps prevent the select from blocking indefinitely if no actions or ticks occur.
+			// Potentially log this if it happens too often, might indicate an issue.
 		}
 	}
 }
@@ -478,7 +501,7 @@ func (gs *GameSession) handlePlayerAction(msg network.UDPMessage) {
 	}
 }
 
-// Stop ends the game session.
+// Stop ends the game session, closes connections, and notifies the manager.
 func (gs *GameSession) Stop() {
 	log.Printf("Game session %s stopped.", gs.ID)
 	if gs.udpConn != nil {
@@ -489,6 +512,9 @@ func (gs *GameSession) Stop() {
 
 // setupUDPConnectionAndListener sets up the UDP listener for this game session.
 func (gs *GameSession) setupUDPConnectionAndListener() error {
+	if gs.udpConn != nil {
+		gs.udpConn.Close() // Close existing connection if any before setting up new
+	}
 	addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", gs.udpPort))
 	if err != nil {
 		log.Printf("[GameSession %s] Failed to resolve UDP address for port %d: %v", gs.ID, gs.udpPort, err)
@@ -680,4 +706,267 @@ func (gs *GameSession) getPlayerByUsername(username string) *models.PlayerInGame
 		return gs.Player2
 	}
 	return nil
+}
+
+// isKingTower checks if a given tower is a King Tower.
+func (gs *GameSession) isKingTower(tower *models.TowerInstance) bool {
+	// Assuming King Tower can be identified by its SpecID or Name.
+	// Let's primarily use SpecID for robustness.
+	spec, ok := gs.Config.Towers[tower.SpecID]
+	if !ok {
+		log.Printf("[GameSession %s] Warning: Could not find tower spec for ID %s to check if King Tower.", gs.ID, tower.SpecID)
+		return false // Or handle as an error
+	}
+	return spec.Name == "King Tower" // Or check spec.ID == "king_tower"
+}
+
+// determineWinnerAndStop evaluates win conditions and stops the game.
+// reason: "timeout", "king_tower_destroyed", "player_quit"
+func (gs *GameSession) determineWinnerAndStop(reason string) {
+	if gs.isGameOver { // Prevent multiple calls
+		return
+	}
+	gs.isGameOver = true // Mark game as over immediately
+	log.Printf("[GameSession %s] Determining winner due to: %s", gs.ID, reason)
+
+	var winner *models.PlayerInGame
+	var resultPlayer1, resultPlayer2 string // "win", "loss", "draw"
+	var p1ExpEarned, p2ExpEarned int
+
+	switch reason {
+	case "king_tower_destroyed":
+		// The player whose King Tower is NOT destroyed is the winner.
+		// We need to find out which King Tower was destroyed.
+		// The call to this function happens right after a tower is destroyed.
+		// The 'defender' in that context lost their King Tower.
+		// Let's iterate through towers to be certain.
+		p1KingDestroyed := false
+		p2KingDestroyed := false
+		for _, tower := range gs.towers {
+			if gs.isKingTower(tower) && tower.IsDestroyed {
+				if tower.OwnerID == gs.Player1.Account.Username {
+					p1KingDestroyed = true
+				} else if tower.OwnerID == gs.Player2.Account.Username {
+					p2KingDestroyed = true
+				}
+			}
+		}
+
+		if p1KingDestroyed && !p2KingDestroyed {
+			winner = gs.Player2
+			gs.gameWinner = gs.Player2
+			gs.gameResult = fmt.Sprintf("%s won (King Tower)", gs.Player2.Account.Username)
+			resultPlayer1 = "loss"
+			resultPlayer2 = "win"
+		} else if p2KingDestroyed && !p1KingDestroyed {
+			winner = gs.Player1
+			gs.gameWinner = gs.Player1
+			gs.gameResult = fmt.Sprintf("%s won (King Tower)", gs.Player1.Account.Username)
+			resultPlayer1 = "win"
+			resultPlayer2 = "loss"
+		} else {
+			// This case (both or neither king tower destroyed by this specific event) should ideally not happen
+			// if called correctly. Or could be a simultaneous destruction? For now, treat as a draw.
+			log.Printf("[GameSession %s] Ambiguous King Tower destruction state (p1King: %v, p2King: %v). Declaring draw.", gs.ID, p1KingDestroyed, p2KingDestroyed)
+			gs.gameResult = "Draw (Simultaneous King Tower Destruction or Error)"
+			resultPlayer1 = "draw"
+			resultPlayer2 = "draw"
+		}
+
+	case "timeout":
+		p1TowersDestroyed := 0
+		p2TowersDestroyed := 0
+		for _, tower := range gs.towers {
+			if tower.IsDestroyed {
+				if tower.OwnerID == gs.Player1.Account.Username { // This tower belonged to P1, so P2 destroyed it.
+					p2TowersDestroyed++
+				} else if tower.OwnerID == gs.Player2.Account.Username { // This tower belonged to P2, so P1 destroyed it.
+					p1TowersDestroyed++
+				}
+			}
+		}
+		log.Printf("[GameSession %s] Timeout: Player 1 destroyed %d towers, Player 2 destroyed %d towers.", gs.ID, p1TowersDestroyed, p2TowersDestroyed)
+		if p1TowersDestroyed > p2TowersDestroyed {
+			winner = gs.Player1
+			gs.gameWinner = gs.Player1
+			gs.gameResult = fmt.Sprintf("%s won (Most Towers)", gs.Player1.Account.Username)
+			resultPlayer1 = "win"
+			resultPlayer2 = "loss"
+		} else if p2TowersDestroyed > p1TowersDestroyed {
+			winner = gs.Player2
+			gs.gameWinner = gs.Player2
+			gs.gameResult = fmt.Sprintf("%s won (Most Towers)", gs.Player2.Account.Username)
+			resultPlayer1 = "loss"
+			resultPlayer2 = "win"
+		} else {
+			gs.gameResult = "Draw (Equal Towers Destroyed)"
+			resultPlayer1 = "draw"
+			resultPlayer2 = "draw"
+		}
+	case "player_quit":
+		// Determine which player did not quit
+		if gs.player1Quit && !gs.player2Quit {
+			winner = gs.Player2
+			gs.gameWinner = gs.Player2
+			gs.gameResult = fmt.Sprintf("%s won (Opponent Quit)", gs.Player2.Account.Username)
+			resultPlayer1 = "loss" // The quitter loses
+			resultPlayer2 = "win"
+		} else if gs.player2Quit && !gs.player1Quit {
+			winner = gs.Player1
+			gs.gameWinner = gs.Player1
+			gs.gameResult = fmt.Sprintf("%s won (Opponent Quit)", gs.Player1.Account.Username)
+			resultPlayer1 = "win"
+			resultPlayer2 = "loss" // The quitter loses
+		} else {
+			// Both quit or some other state, declare as draw or handle as needed
+			gs.gameResult = "Draw (Both Players Quit or Undetermined)"
+			resultPlayer1 = "draw"
+			resultPlayer2 = "draw"
+			log.Printf("[GameSession %s] Both players quit or quit state unclear. Declaring draw.", gs.ID)
+		}
+
+	default:
+		log.Printf("[GameSession %s] Unknown game end reason: %s. Declaring draw.", gs.ID, reason)
+		gs.gameResult = "Draw (Unknown Reason)"
+		resultPlayer1 = "draw"
+		resultPlayer2 = "draw"
+	}
+
+	// Calculate EXP from destroyed towers
+	for _, tower := range gs.towers {
+		if tower.IsDestroyed {
+			towerSpec, ok := gs.Config.Towers[tower.SpecID]
+			if !ok {
+				log.Printf("[GameSession %s] Warning: Could not find spec for destroyed tower %s (ID: %s) for EXP calculation.", gs.ID, tower.GameSpecificID, tower.SpecID)
+				continue
+			}
+			// If Player1's tower was destroyed, Player2 gets EXP
+			if tower.OwnerID == gs.Player1.Account.Username {
+				p2ExpEarned += towerSpec.EXPYield
+			} else if tower.OwnerID == gs.Player2.Account.Username {
+				p1ExpEarned += towerSpec.EXPYield
+			}
+		}
+	}
+
+	// Add win/draw bonus EXP
+	if resultPlayer1 == "win" {
+		p1ExpEarned += 30 // Win bonus from plan
+	} else if resultPlayer1 == "draw" {
+		p1ExpEarned += 10 // Draw bonus from plan
+	}
+
+	if resultPlayer2 == "win" {
+		p2ExpEarned += 30 // Win bonus
+	} else if resultPlayer2 == "draw" {
+		p2ExpEarned += 10 // Draw bonus
+	}
+
+	log.Printf("[GameSession %s] EXP Earned This Game: %s -> %d, %s -> %d", gs.ID, gs.Player1.Account.Username, p1ExpEarned, gs.Player2.Account.Username, p2ExpEarned)
+	// gs.Player1.Account.EXP += p1ExpEarned // This is now handled by UpdatePlayerAfterGame
+	// gs.Player2.Account.EXP += p2ExpEarned // This is now handled by UpdatePlayerAfterGame
+
+	p1LeveledUp, errP1 := persistence.UpdatePlayerAfterGame(&gs.Player1.Account, p1ExpEarned)
+	if errP1 != nil {
+		log.Printf("[GameSession %s] Error updating player %s data: %v", gs.ID, gs.Player1.Account.Username, errP1)
+	}
+	p2LeveledUp, errP2 := persistence.UpdatePlayerAfterGame(&gs.Player2.Account, p2ExpEarned)
+	if errP2 != nil {
+		log.Printf("[GameSession %s] Error updating player %s data: %v", gs.ID, gs.Player2.Account.Username, errP2)
+	}
+
+	if p1LeveledUp {
+		log.Printf("[GameSession %s] Player %s leveled up to Level %d!", gs.ID, gs.Player1.Account.Username, gs.Player1.Account.Level)
+	}
+	if p2LeveledUp {
+		log.Printf("[GameSession %s] Player %s leveled up to Level %d!", gs.ID, gs.Player2.Account.Username, gs.Player2.Account.Level)
+	}
+
+	if winner != nil {
+		log.Printf("[GameSession %s] Game ended. Winner: %s. Result: %s", gs.ID, winner.Account.Username, gs.gameResult)
+	} else {
+		log.Printf("[GameSession %s] Game ended. Result: %s", gs.ID, gs.gameResult)
+	}
+
+	// TODO: Sprint 5: Calculate EXP for Player1 -> DONE
+	// TODO: Sprint 5: Calculate EXP for Player2 -> DONE
+	// TODO: Sprint 5: Persist Player1 and Player2 data (including new EXP/Level) -> DONE
+	// TODO: Sprint 5: Send game_over_results message via TCP to both clients -> To be done by receiver of resultsChan
+
+	// Construct GameResultInfo
+	resultInfo := network.GameResultInfo{
+		SessionID:       gs.ID,
+		Player1Username: gs.Player1.Account.Username,
+		Player2Username: gs.Player2.Account.Username,
+		GameEndReason:   reason,
+	}
+	if gs.gameWinner != nil {
+		resultInfo.OverallWinnerID = gs.gameWinner.Account.Username
+	}
+
+	// Player 1 results
+	resultInfo.Player1Result = network.GameOverResults{
+		WinnerID:  resultInfo.OverallWinnerID,
+		Outcome:   resultPlayer1, // "win", "loss", "draw"
+		EXPChange: p1ExpEarned,
+		NewEXP:    gs.Player1.Account.EXP,
+		NewLevel:  gs.Player1.Account.Level,
+		LevelUp:   p1LeveledUp,
+		// DestroyedTowers: populated below
+	}
+
+	// Player 2 results
+	resultInfo.Player2Result = network.GameOverResults{
+		WinnerID:  resultInfo.OverallWinnerID,
+		Outcome:   resultPlayer2, // "win", "loss", "draw"
+		EXPChange: p2ExpEarned,
+		NewEXP:    gs.Player2.Account.EXP,
+		NewLevel:  gs.Player2.Account.Level,
+		LevelUp:   p2LeveledUp,
+		// DestroyedTowers: populated below
+	}
+
+	// Populate DestroyedTowers for each player
+	// p1DestroyedCount is towers P1 destroyed (owned by P2)
+	// p2DestroyedCount is towers P2 destroyed (owned by P1)
+	p1DestroyedCount := 0
+	p2DestroyedCount := 0
+	for _, tower := range gs.towers {
+		if tower.IsDestroyed {
+			if tower.OwnerID == gs.Player2.Account.Username { // P2's tower destroyed by P1
+				p1DestroyedCount++
+			} else if tower.OwnerID == gs.Player1.Account.Username { // P1's tower destroyed by P2
+				p2DestroyedCount++
+			}
+		}
+	}
+	resultInfo.Player1Result.DestroyedTowers = map[string]int{gs.Player2.Account.Username: p1DestroyedCount} // Towers P1 destroyed (belonging to P2)
+	resultInfo.Player2Result.DestroyedTowers = map[string]int{gs.Player1.Account.Username: p2DestroyedCount} // Towers P2 destroyed (belonging to P1)
+
+	if gs.resultsChan != nil {
+		select {
+		case gs.resultsChan <- resultInfo:
+			log.Printf("[GameSession %s] Sent game results to results channel.", gs.ID)
+		case <-time.After(2 * time.Second): // Timeout to prevent blocking indefinitely
+			log.Printf("[GameSession %s] Timeout sending game results to results channel.", gs.ID)
+		}
+		// close(gs.resultsChan) // The receiver should decide when to close if it's long-lived, or if it's one-shot, this is fine.
+		// For now, assume the receiver handles its lifecycle.
+	} else {
+		log.Printf("[GameSession %s] resultsChan is nil. Cannot send game results.", gs.ID)
+	}
+
+	// Send final game state update, possibly indicating game over
+	gs.sendGameStateToAllPlayers() // Ensure clients get one last update
+
+	// Actual stopping of the session (closing UDP conn, removing from manager)
+	gs.Stop() // Call the original Stop method to clean up resources
+}
+
+// sendGameStateToAllPlayers sends a game state update to all players in the session.
+func (gs *GameSession) sendGameStateToAllPlayers() {
+	// This is a placeholder. The actual implementation should gather game state data
+	// and send it to all connected players.
+	// For now, we'll just log the call.
+	log.Printf("[GameSession %s] Sending game state to all players.", gs.ID)
 }

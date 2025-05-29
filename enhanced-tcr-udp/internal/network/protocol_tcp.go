@@ -74,3 +74,15 @@ type GameOverResults struct {
 	LevelUp         bool           `json:"level_up"`
 	DestroyedTowers map[string]int `json:"destroyed_towers"` // map[playerID]count
 }
+
+// GameResultInfo is used to pass comprehensive game results internally,
+// typically from a GameSession back to a managing component that handles TCP responses.
+type GameResultInfo struct {
+	SessionID       string          `json:"session_id"`
+	Player1Username string          `json:"player1_username"`
+	Player2Username string          `json:"player2_username"`
+	Player1Result   GameOverResults `json:"player1_result"`              // Individual result for player 1
+	Player2Result   GameOverResults `json:"player2_result"`              // Individual result for player 2
+	OverallWinnerID string          `json:"overall_winner_id,omitempty"` // Username of the winner, empty if draw
+	GameEndReason   string          `json:"game_end_reason"`             // e.g., "timeout", "king_tower_destroyed"
+}

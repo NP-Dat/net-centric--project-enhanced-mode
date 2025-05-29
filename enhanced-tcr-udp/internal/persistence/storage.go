@@ -86,3 +86,37 @@ func LoadTowerConfig() (map[string]models.TowerSpec, error) {
 	}
 	return towers, nil
 }
+
+// calculateExpForNextLevel calculates the EXP needed to reach the next level.
+// Base EXP for Level 2 is 100. Each subsequent level requires 10% more than the previous.
+func calculateExpForNextLevel(currentLevel int) int {
+	if currentLevel < 1 {
+		return 100 // Default for level 1 to 2
+	}
+	expNeeded := 100.0
+	for i := 1; i < currentLevel; i++ {
+		expNeeded *= 1.1
+	}
+	return int(expNeeded)
+}
+
+// UpdatePlayerAfterGame updates a player's EXP and handles leveling up.
+// It then saves the account.
+func UpdatePlayerAfterGame(acc *models.PlayerAccount, expGained int) (bool, error) {
+	acc.EXP += expGained
+	didLevelUp := false
+
+	// Check for level ups
+	expForNext := calculateExpForNextLevel(acc.Level)
+	for acc.EXP >= expForNext {
+		acc.Level++
+		didLevelUp = true
+		acc.EXP -= expForNext                            // Deduct only the EXP needed for that level up
+		expForNext = calculateExpForNextLevel(acc.Level) // Recalculate for potential multi-level up
+	}
+
+	if err := SavePlayerAccount(acc); err != nil {
+		return didLevelUp, err
+	}
+	return didLevelUp, nil
+}

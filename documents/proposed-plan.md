@@ -194,11 +194,11 @@ enhanced-tcr-udp/
     *   [x] Server: Update HP values in `game_state_update_udp` frequently. Send `game_event_udp` for significant combat events (tower destroyed, critical hit).
     *   [x] Client (`ui_termbox.go`): Update HP displays for towers and troops dynamically. Display game events from server.
 
-*   **Sprint 5: Win Conditions, EXP/Leveling & Results (TCP for final)**
+*   **Sprint 5: Win Conditions, EXP/Leveling & Results**
     *   [ ] Server: Implement win condition checks (King Tower destruction, timeout tower count).
     *   [ ] Server: Upon game end, calculate EXP earned (tower destruction + win/draw bonus).
     *   [ ] Server: Update player EXP/Level in persisted data (`internal/persistence/storage.go`).
-    *   [ ] Server: Send `game_over_results` message via TCP to clients.
+    *   [ ] Server: Send `game_over_results` message to clients.
     *   [ ] Client: Handle `game_over_results` and display outcome, EXP earned, and any level-up message in `termbox-go`.
     *   [ ] Ensure player levels correctly influence troop/tower stats at the start of the next game.
 
