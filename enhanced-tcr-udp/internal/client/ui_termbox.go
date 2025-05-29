@@ -3,8 +3,7 @@ package client
 import (
 	"enhanced-tcr-udp/internal/models"
 	"fmt"
-
-	// "log"
+	"log"
 
 	"github.com/nsf/termbox-go"
 )
@@ -85,12 +84,7 @@ func (ui *TermboxUI) Render() {
 	currentY := 1 // Start rendering from Y=1
 
 	// Game Info Area (Top)
-	infoLine1 := ""
-	if ui.client != nil && ui.client.PlayerAccount != nil {
-		infoLine1 = fmt.Sprintf("Time: %ds | My PlayerID: %s", ui.gameTimer, ui.client.PlayerAccount.Username)
-	} else {
-		infoLine1 = fmt.Sprintf("Time: %ds | My PlayerID: Unknown", ui.gameTimer)
-	}
+	infoLine1 := fmt.Sprintf("Time: %ds | My PlayerID: %s", ui.gameTimer, ui.client.PlayerAccount.Username)
 	infoLine2 := fmt.Sprintf("My Mana: %d | Opponent Mana: %d", ui.myMana, ui.opponentMana)
 	ui.DisplayStaticText(1, currentY, infoLine1, termbox.ColorWhite, termbox.ColorBlack)
 	currentY++
@@ -115,17 +109,7 @@ func (ui *TermboxUI) Render() {
 			} else {
 				fgColor = termbox.ColorRed
 			}
-			// Ensure SpecID is not empty; default to a placeholder if it is, to avoid panic with Sprintf format if it was empty string for example.
-			towerSpecIDForDisplay := tower.SpecID
-			if towerSpecIDForDisplay == "" {
-				towerSpecIDForDisplay = "[UnknownTowerType]"
-			}
-			towerGameSpecificIDForDisplay := tower.GameSpecificID
-			if towerGameSpecificIDForDisplay == "" {
-				towerGameSpecificIDForDisplay = "[UnknownTowerID]"
-			}
-
-			towerInfo := fmt.Sprintf("%s %s (ID: %s): HP %d/%d", prefix, towerSpecIDForDisplay, towerGameSpecificIDForDisplay, tower.CurrentHP, tower.MaxHP)
+			towerInfo := fmt.Sprintf("%s %s (ID: %s): HP %d/%d", prefix, tower.SpecID, tower.GameSpecificID, tower.CurrentHP, tower.MaxHP)
 			if tower.IsDestroyed {
 				towerInfo += " [DESTROYED]"
 				fgColor = termbox.ColorDarkGray // Or some other color to indicate destroyed
@@ -157,12 +141,7 @@ func (ui *TermboxUI) Render() {
 			} else {
 				fgColor = termbox.ColorMagenta
 			}
-			// Ensure SpecID is not empty
-			troopSpecIDForDisplay := troop.SpecID
-			if troopSpecIDForDisplay == "" {
-				troopSpecIDForDisplay = "[UnknownTroopType]"
-			}
-			troopInfo := fmt.Sprintf("%s %s (ID: %s): HP %d/%d, ATK %d", prefix, troopSpecIDForDisplay, id, troop.CurrentHP, troop.MaxHP, troop.CurrentATK)
+			troopInfo := fmt.Sprintf("%s %s (ID: %s): HP %d/%d, ATK %d", prefix, troop.SpecID, id, troop.CurrentHP, troop.MaxHP, troop.CurrentATK)
 			if troop.CurrentHP <= 0 {
 				troopInfo += " [DEFEATED]"
 				fgColor = termbox.ColorDarkGray // Or some other color
@@ -229,9 +208,9 @@ mainloop:
 			case termbox.KeyEsc:
 				if ui.lastSelectedTroop != 0 {
 					ui.lastSelectedTroop = 0 // Deselect troop
-					// log.Println("Troop selection cleared.")
+					log.Println("Troop selection cleared.")
 				} else {
-					// log.Println("ESC key pressed. Quit requested from UI loop.")
+					log.Println("ESC key pressed. Quit requested from UI loop.")
 					quitRequested = true // Signal quit
 					// No longer sending quit message from here
 					break mainloop
@@ -255,19 +234,18 @@ mainloop:
 					case '6':
 						troopID = "queen"
 					default:
-						// log.Printf("Invalid troop selection: %c", ui.lastSelectedTroop)
-						break // Do nothing if invalid selection
+						log.Printf("Invalid troop selection: %c", ui.lastSelectedTroop)
 					}
 
 					if troopID != "" && ui.client != nil {
 						err := ui.client.SendDeployTroopCommand(troopID)
 						if err != nil {
-							// log.Printf("Error sending deploy troop command: %v", err)
+							log.Printf("Error sending deploy troop command: %v", err)
 							ui.AddEventMessage(fmt.Sprintf("Deploy Error: %v", err))
 						} else {
-							// log.Printf("Deploy troop command sent for: %s (%c)", troopID, ui.lastSelectedTroop)
-							troopName := troopID          // Default to ID
-							switch ui.lastSelectedTroop { // Get a nicer name for the message
+							log.Printf("Deploy troop command sent for: %s (%c)", troopID, ui.lastSelectedTroop)
+							troopName := troopID
+							switch ui.lastSelectedTroop {
 							case '1':
 								troopName = "Pawn"
 							case '2':
@@ -284,37 +262,35 @@ mainloop:
 							ui.AddEventMessage(fmt.Sprintf("Deploy command for %s sent.", troopName))
 						}
 					} else if ui.client == nil {
-						// log.Println("Cannot send deploy command: client reference is nil in UI")
+						log.Println("Cannot send deploy command: client reference is nil in UI")
 					}
 					ui.lastSelectedTroop = 0 // Clear selection after attempted deployment
 				} else {
 					// Handle command input if any, from ui.inputLine
-					// log.Printf("Enter pressed. Current input (if any): %s", ui.inputLine)
+					log.Printf("Enter pressed. Current input (if any): %s", ui.inputLine)
 					ui.inputLine = "" // Clear input line
 				}
 			default:
 				// Check for troop selection keys '1' through '6'
 				if ev.Ch >= '1' && ev.Ch <= '6' {
 					ui.lastSelectedTroop = ev.Ch
-					// log.Printf("Troop %c selected.", ui.lastSelectedTroop)
+					log.Printf("Troop %c selected.", ui.lastSelectedTroop)
 				} else if ev.Ch != 0 {
 					// Append to general input line if not a troop selection
 					// ui.inputLine += string(ev.Ch)
-					// log.Printf("Other key: %c", ev.Ch) // For debugging other inputs
+					log.Printf("Other key: %c", ev.Ch) // For debugging other inputs
 				}
 				// For backspace on ui.inputLine etc., more complex input handling would be needed here
 			}
 			ui.Render() // Re-render after any key press that changes state
 
 		case termbox.EventResize:
-			// log.Println("Screen resized. Redrawing.")
+			log.Println("Screen resized. Redrawing.")
 			ui.ClearScreen()
-			// ui.DisplayStaticText(1, 1, "Basic Termbox UI Active. Press ESC to quit. (Resized)", termbox.ColorWhite, termbox.ColorBlack)
-			// Re-render the whole UI after resize
-			ui.Render()
+			ui.DisplayStaticText(1, 1, "Basic Termbox UI Active. Press ESC to quit. (Resized)", termbox.ColorWhite, termbox.ColorBlack)
 
 		case termbox.EventError:
-			// log.Printf("Termbox event error: %v", ev.Err)
+			log.Printf("Termbox event error: %v", ev.Err)
 			break mainloop // Exit on error, quitRequested will be false
 		}
 	}
